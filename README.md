@@ -1,0 +1,214 @@
+# graph-wiki: Markdown Knowledge Graph Analyzer
+
+[![Python 3.10+](https://img.shields.io/badge/python-3.10%2B-blue)](https://www.python.org/)
+[![License: MIT](https://img.shields.io/badge/license-MIT-green)](LICENSE)
+[![Tests](https://img.shields.io/badge/tests-132%2B7%20subtests%20hermetic-brightgreen)](tests/)
+
+从 Markdown `[[wikilinks]]` 或 ontology JSONL 构建有向图，进行全量图计算分析。
+
+```
+输入: Markdown 文件 [[wikilinks]] / ontology JSONL 实体关系
+计算: networkx PageRank + Louvain 社区检测 + 桥接节点 + 最短路径 + 扩散分析
+输出: 单源 11 维 / wiki+ontology 12 维评分 + D1-D11 指标 + P0/P1/P2 修复清单
+运维: 周检脚本 + 回归基线 + 自动告警门禁
+```
+
+**输出语言**：CLI 的人类可读输出（横幅、进度、表格、详细结果）全部为简体中文，不提供英文界面；`--json` / `--scorecard` 的机器可读键名保持英文。
+
+## 架构
+
+```
+graph_loader.py           ← 统一图构建入口（wiki / ontology / 离线 ragflow dump）
+    ↓
+graph-compute.py          ← 图算法（PageRank / Louvain / 桥接 / 最短路）
+graph-diagnose.py         ← 结构诊断 → P0/P1/P2 任务清单
+graph-test-suite.py       ← 单源 11 维；wiki+ontology 追加 ontology_alignment（本体关系对齐）评分
+```
+
+## 安装
+
+建议使用项目虚拟环境，避免系统 Python 的依赖冲突。Debian/Ubuntu 需先安装 venv 组件（如 `sudo apt install python3-venv` 或对应版本的 `python3.12-venv`）。
+
+```bash
+cd /path/to/graph-wiki
+python3 -m venv .venv        # Python 3.14 缺 ensurepip 时改用：rm -rf .venv && python3.12 -m venv .venv
+.venv/bin/python -m pip install -r scripts/requirements.txt -r tests/requirements-dev.txt
+```
+
+> **Python 3.14 注意**：system `python3` 为 3.14 且未装 `python3.14-venv` 时，`python3 -m venv .venv` 会以 `The virtual environment was not created successfully because ensurepip is not available` 失败（venv 引导问题，不是依赖问题）。装不了 apt 包或没有 sudo 时，回退到 `rm -rf .venv && python3.12 -m venv .venv`，之后所有命令都用 `.venv/bin/python` 执行。
+> **必须先删残留**：上一步失败后会留下一个**残缺的 `.venv/`**（有 `python` 符链，没有 `pip`）。直接在它上面跑 `python3.12 -m venv .venv` 会以 exit 0 “成功”，但 `python -m pip` 仍报 `No module named pip`——必须先 `rm -rf .venv` 再建。
+
+## 快速开始
+
+### 自包含示例语料（克隆即可跑）
+
+```bash
+.venv/bin/python scripts/graph-test-suite.py \
+  --source wiki,ontology \
+  --wiki-root examples/mini-wiki \
+  --ontology-path examples/mini-ontology.jsonl
+```
+
+`examples/` 还包含 `examples/mini-ragflow.jsonl`（离线 chunk dump 样例），可直接体验 ragflow 模式：
+
+```bash
+.venv/bin/python scripts/graph-test-suite.py \
+  --source ragflow --ragflow-path examples/mini-ragflow.jsonl
+```
+
+### Wiki 模式（分析你自己的库）
+
+```bash
+cd /path/to/your/wiki
+/path/to/graph-wiki/.venv/bin/python /path/to/graph-wiki/scripts/graph-test-suite.py   # 1. 跑分（11 项 × 10 分 + 10 bonus 上限 = 120 分）
+/path/to/graph-wiki/.venv/bin/python /path/to/graph-wiki/scripts/graph-diagnose.py     # 2. 诊断（结构问题 → 任务清单）
+# 3. 按 P0 → P1 → P2 执行修复，回到步骤 1
+```
+
+### Wiki + Ontology 治理模式
+
+```bash
+.venv/bin/python scripts/graph-diagnose.py \
+  --source wiki,ontology --wiki-root /path/to/wiki \
+  --ontology-path /path/to/ontology.jsonl --json
+.venv/bin/python scripts/graph-test-suite.py \
+  --source wiki,ontology --wiki-root /path/to/wiki \
+  --ontology-path /path/to/ontology.jsonl
+```
+
+### 回归测试
+
+```bash
+.venv/bin/python -m pytest tests/ -v
+```
+
+测试全部使用仓库内置的合成数据（`examples/mini-*`），不依赖外部服务与网络。
+
+## 数据路径
+
+- `examples/mini-wiki/`、`examples/mini-ontology.jsonl`、`examples/mini-ragflow.jsonl`：自包含示例语料，所有默认路径指向这里。
+- Wiki 根目录通过 `--wiki-root /path/to/wiki` 或 `WIKI_ROOT` 显式配置。
+- Ontology 通过 `--ontology-path /path/to/ontology.jsonl` 或 `ONTOLOGY_PATH` 显式配置。
+
+## 工具速查
+
+| 工具 | 功能 | 关键输出 |
+|------|------|---------|
+| `graph_loader.py` | 统一图构建 | `(DiGraph, meta_dict)` — wiki / ontology / 离线 ragflow |
+| `graph-test-suite.py` | 量化跑分 | wiki-only 120 分；wiki+ontology 追加 D11 后 130 分；含 ragflow 为 140 分（各项 10 分 + 10 分 bonus 上限） |
+| `graph-diagnose.py` | 结构诊断 | D1-D7 结构问题 + 多源 D8-D10 融合指标 |
+| `graph-compute.py` | 图算法 | PageRank Top15 / 社区 / 桥接 / 最短路 |
+| `canary-gate.py` | 质量门禁 | PASS/WARN/REVIEW/BLOCK 四态退出码 |
+| `weekly-health-check.py` | 周检自动化 | 评分回归检测 / 退行告警 / 基线对比 |
+
+### graph-test-suite.py 退出码与验收阈值
+
+| 退出码 | 含义 |
+|--------|------|
+| 0 | 运行完成（默认表格或 `--json`）——**不代表**已达验收阈值，请读输出中的分数 |
+| 1 | 仅 `--scorecard` / `--quiet`：存在单项 < 4 分的维度（stderr 打印 `Failing dimensions`） |
+| 2 | 参数错误（argparse / 无效的 `--diagnosis-json` / canary 数据导出失败） |
+
+`--json` 时 stdout 严格只输出 JSON（D8 进度行等人类可读信息静默），可直接 `| jq`。验收阈值固定为 **60 分（即 60%，评级 B 起点）**，每次运行结束打印 `验收阈值: 60 分（60%，评级 B 起点）→ 通过/未通过`；`--json` 模式下对应 `summary.acceptance_threshold` 与 `summary.acceptance_passed`。
+
+## 依赖
+
+- Python 3.10+（SQLite 3.35+）
+- `networkx`
+- `scipy`
+- `python-louvain` (community detection)
+
+## 适用场景
+
+适用于任何使用 `[[wikilinks]]` 双向链接的 Markdown 知识库（Obsidian、Foam、自定义 wiki 等），以及使用 ontology JSONL 格式的实体关系图谱数据。
+
+**隐私**：所有分析都在本机进行；工具只读取你显式指定的 wiki / ontology 路径，不发送任何数据到网络（ragflow realtime 模式除外——仅在显式提供 API key 时启用，且显式指定的离线 dump 永远优先）。
+
+## 文档
+
+- `DESIGN_scoring_architecture.md` — 评分体系设计与 D3/D10 冻结的统计论证
+- `CHANGELOG.md` — 版本历史
+- `references/` — 详细配方（孤岛缝合、冗余检测、扩展指标 等）
+
+## 局限
+
+- `redundancy-detector.py` 和 `extra-metrics.py` 尚未实现（见 `references/` 中的 L1/L2/L3 冗余检测方案和 D8/D9/D10 扩展指标说明）
+- 脚本假设所有 `.md` 文件参与图构建；不支持目录级过滤配置
+- 大型 wiki（>10K 页）的性能未经测试
+
+## 评分维度 (v3.6)
+
+### 主维度 (D1-D12)
+
+| 维度 | 名称 | 满分 | 说明 |
+|------|------|------|------|
+| D1 | 多跳最短路径 | 10 | 3+ 跳概念对的最短路径发现 |
+| D2 | 中心性三角 | 10 | PageRank vs Betweenness vs Closeness |
+| D3 | 社区-理论家对齐 | 10 | Louvain 社区 vs 理论家来源一致性 |
+| D4 | 结构洞检测 | 10 | 删除后网络碎裂最严重的枢纽节点 |
+| D5 | 互惠链接 | 10 | 双向引用概念对检测 |
+| D6 | 死胡同检测 | 10 | 出度为 0 的概念 |
+| D7 | 图直径 | 10 | 最长最短路径与网络紧凑度 |
+| D8 | 种子扩散 | 10 | 从枢纽概念可触达的概念覆盖率 |
+| D9 | 自引用检测 | 10 | 概念是否意外引用自己 |
+| D10 | PR-入度相关性 | 10 | PageRank 与简单入度的排序相关性 |
+| D11 | 跨理论家密度 | 10 | 不同理论家概念间的链接覆盖率 |
+| D12 | 实体类型多样性 | 10 | Ontology 实体类型的 Shannon 熵（仅 ontology 源）|
+
+追加评分：`ontology_alignment`（wiki+ontology）、`ragflow_coverage`（ragflow 源）；多源融合三项（覆盖率/一致性/信息增益）参与 bonus，上限 10 分。诊断指标（孤立节点/链接腐烂）见 `graph-diagnose.py`，不计分。
+
+**满分公式（与工具打印一致）**：`max_score = 10 × 评分行数 + 10 bonus 上限`。评分行数 = 实际执行的 10 分项数（含追加评分）：
+
+| 源 | 评分行数 | 满分 |
+|----|---------|------|
+| `wiki` | 11（D1-D11） | **120** |
+| `wiki,ontology` | 12（D1-D11 + `ontology_alignment`） | **130** |
+| `ontology` | 12（D1-D11 + 实体类型多样性） | **130** |
+| `wiki,ontology,ragflow` | 13（再加 `ragflow_coverage`） | **140** |
+
+bonus = `round((覆盖率 + 一致性 + 信息增益) / 3)`，上限 10 分；即使只拿到部分 bonus，分母仍按 +10 计入，因此两源示例的总分行是 `100.14/130`（而不是 `/120`），三源示例是 `113.61/140`。
+
+### 环境变量
+
+| 变量 | 默认 | 说明 |
+|------|------|------|
+| `WIKI_ROOT` | 当前工作目录 | Wiki 根目录 |
+| `ONTOLOGY_PATH` | `examples/mini-ontology.jsonl` | Ontology JSONL 路径 |
+| `RAGFLOW_API_KEY` | 空 | ragflow realtime 模式（可选；显式离线路径时忽略） |
+| `D8_TOP_N` | `100` | D8 加权覆盖率 Top-N |
+| `D10_PRIMARY` | `ontology` | D10 主视角 (`wiki` / `ontology`) |
+
+### API
+
+```python
+import sys
+sys.path.insert(0, "scripts")
+
+from graph_loader import build_graph
+from scorecard import build_scorecard
+
+graph, metadata = build_graph(
+    "wiki,ontology",
+    wiki_root="/path/to/wiki",
+    ontology_path="/path/to/ontology.jsonl",
+)
+scorecard = build_scorecard(graph=graph, source="wiki,ontology")
+print(scorecard["metrics"]["composite"]["health_score"])
+```
+
+### Canary Gate (CI 集成)
+
+```bash
+.venv/bin/python scripts/canary-gate.py \
+  --source wiki \
+  --wiki-root /path/to/wiki \
+  --baseline baseline.json \
+  --json
+
+# 退出码: 0=PASS, 1=WARN, 2=REVIEW, 3=BLOCK
+echo $?
+```
+
+## 许可
+
+[MIT](LICENSE) — Copyright (c) 2026 lynxpurr

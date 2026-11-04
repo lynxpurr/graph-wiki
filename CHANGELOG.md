@@ -1,0 +1,181 @@
+# Changelog
+
+## v3.10.1 (2026-11-06) — Documentation Coherence + CLI Integrity
+
+### Fixed
+
+- **`--json` stdout purity**: progress lines are fully silenced in JSON mode, so `--json | jq` works; the same
+  holds when stderr is merged into stdout (common in CI and agent harnesses). Previously a D8 progress line
+  could corrupt the JSON stream in merged-output contexts.
+- **Denominator formula documented**: `max_score = 10 x scoring rows + 10 bonus ceiling`, aligned across
+  README, the tool banner and JSON output for all three source combinations (120 / 130 / 140). The banner
+  previously showed `items x 10` only, which disagreed with the actual denominator.
+- **Examples unified on `.venv/bin/python`**: every documented command now uses the virtualenv interpreter
+  instead of a bare `python3`.
+- **Python 3.14 bootstrap**: documented that `python3 -m venv` fails with
+  `ensurepip is not available` when `python3` is 3.14 without `python3.14-venv`, plus the
+  `python3.12 -m venv` fallback.
+- **Acceptance threshold surfaced**: the 60-point (60%, grade B floor) acceptance line is now printed and
+  exposed as `acceptance_threshold` / `acceptance_passed` in `--json`.
+- **Output language stated**: human-readable CLI output (banner, progress, tables, results) is Simplified
+  Chinese; machine-readable keys stay English.
+- **D-numbering namespace clarified**: the appended scoring rows `ontology_alignment` and `ragflow_coverage`
+  were mislabeled `D11` / `D12` in the results header, colliding with the `D11` (cross-theorist density) and
+  `D12` (entity type diversity) dimensions in the README table. They are now labeled by name. **JSON keys are
+  unchanged** (`multi_source_scores.D11` / `.D12`) to preserve backward compatibility with
+  `canary-gate.py` and the test suite.
+
+### Engineering
+
+- Pre-release audit: `gitleaks` full-history scan 0 leaks; `bandit` 0 Medium / 0 High (7 Low);
+  `pytest` 132 passed + 7 subtests.
+- Verified by two independent zero-context documentation trials (same-model and cross-model), both reaching
+  a documented first successful run with no blocking gaps.
+
+## v3.10.0 (2026-07-28) — Content Expansion + Engineering Consolidation
+
+### Decision
+
+- **Option C selected**: Content expansion + engineering consolidation. Options A (link injection) and B (threshold loosening) rejected with high-confidence evidence.
+- D3 frozen at 6/10: structural ceiling proven — even large cross-link injection cannot push weighted purity below the 60% band, because untagged isolated nodes form pure communities. 60% threshold is mathematically unreachable given natural subject clustering.
+- D10 frozen at 8/10: null-model baseline (200-run Erdős-Rényi, $\rho$=0.8467±0.0175) shows observed $\rho$=0.8636 at 84.5th percentile (p=0.16, not significant at $\alpha$=0.05). Threshold modifications would reward statistical noise.
+
+### Engineering
+
+- M4: Fixed broken pytest environment — created isolated `.venv`, installed deps, all tests pass (131 passed + 7 subtests, 0 failures).
+- M5: Tagged v3.9.0, merged develop → main, pushed to origin.
+- M6a: Fixed `--community all` CLI export in `graph-compute.py`.
+- M6b: Added `--no-write` / `read_only` mode to suppress `.merge-conflicts.json` writes on read-only filesystems.
+- M1: Injected D3/D10 calibration freeze notes + v3.10.0 decision evidence into `DESIGN_scoring_architecture.md`.
+
+### Content
+
+- M2: Ontology coverage expanded across the tracked subject groups (entity and relation counts increased).
+- M3: New wiki pages added for the same subject groups, all with ≥3 cross-subject wikilinks and zero broken links.
+- D11 alignment maintained at 100% (+61 coverage).
+
+### Score
+
+- Reference baseline: maintained, not increased (by design).
+- Content expansion enriches the graph without chasing score thresholds. 126 is upside only.
+
+---
+
+## v3.9.0 (2026-07-28)
+
+### Metric redesign
+
+- D3 社区-理论家对齐改为按社区大小加权的平均纯度，避免单节点社区与大型社区等权；基准库基线由 `4/10` 提升至 `6/10`。
+- D5 互惠链接采用知识图谱校准阈值：`10-35%` 得 10 分，`35-50%` 得 8 分，仅 `>50%` 保留回音室警告；基准库基线由 `6/10` 提升至 `10/10`。
+- 新增 `scripts/null-model-baseline.py`，以定向 Erdos-Renyi `G(n,m)` 图输出 PR-入度 Spearman rho 与互惠比的 JSON 基线、标准差、95% CI 和观测值百分位。
+- 所有 7 处 `community_louvain.best_partition()` 调用固定 `random_state=42`，社区划分和 D3 得分可复现。
+
+### Score
+
+- 基准库基线分数提升 6 分（A+ 档）。
+- D3 加权纯度落入 60%-<80% 档，D5 互惠比处于 10-35% 健康区间；D10 保持 `8/10`，评分阈值未改。
+- 同规模 100-run null model：rho `0.8449 +/- 0.0187`，实际 rho `0.8636` 位于第 86 百分位。
+
+## v3.8.0 (2026-07-28)
+
+### Known limitations
+
+- D3 社区-理论家对齐存在已知天花板：参考基线中存在大量单节点社区。当前对社区纯度做不加权平均，使单节点社区与大型社区同权，
+  其平均值缺乏解释力。该指标计划在 v3.9.0 重设计，包括社区规模加权和
+  单节点社区处理策略。
+
+## v3.7.1 (2026-07-26)
+
+### P0 阻断修复
+
+- `graph_loader.py`: `_build_wiki()` 解析 frontmatter `ontology_mappings`，端到端映射闭环。
+- `canary-gate.py` + `graph-test-suite.py`: Canary 门禁接入真实数据流（`--export-canary-data` / `--canary-data`）。
+- 评分公式百分比化：`pct = total/max_score * 100` 取代绝对阈值，修复等级膨胀。
+
+### P1 安全与质量
+
+- 三级隐私边界：`ONTOLOGY_OUTPUT` env var 路由 Public/Sanitized/Confidential 数据流。
+- 硬编码私有路径消除，默认值切为 `examples/mini-wiki` 便携 fixture。
+- D9 test 同步新语义，`.gitignore` 修正，`LICENSE`（MIT）添加。
+- 文档同步：`README.md` 与脚本 CLI 对齐。
+
+### P2 工程优化
+
+- `scripts/_graph_utils.py`: 公共图加载模块，消除脚本间重复代码。
+- `graph_loader.py` + 客户端脚本: 错误处理加固（`exit 1` + `ERROR:` stderr）。
+- `weekly-health-check.py`: severity baseline 比较修复（`by_severity.P0/P1/P2`）。
+- `requirements.txt` / `requirements-dev.txt`: 版本标准化。
+
+### Mini 语料转向
+
+- Wiki/Ontology/RAGFlow 全部转向 Computer Science 基础（16 页面, 16 实体, 66 关系, 7 chunks）。
+- 6 个缺失 wikilink 页面补全 + L2 措辞修正。
+- Mini corpus 评分: `100.18/130 (77%)` 2-source, `113.06/140 (81%)` 3-source。
+
+### 审查
+
+
+## v3.7.0 (2026-07-26)
+
+### 评分模型
+
+- Bonus 公式从 `(D8+D10)*0.5` 扩展为 `(D8+D9+D10)/3`，D9 consistency 维度进入得分体系。
+- `D10_PRIMARY` 默认值从 `'wiki'` 切换为 `'ontology'`。
+
+### 自动化工具（Phase 2-4）
+
+- `suggest-mappings.py`：三层匹配管道（字符串 + 语义 + 图结构），自动推荐 ontology 候选映射。
+- `_matching.py`：匹配算法库（字符串相似度 + 社区亲和度）。
+- `orphan-report.py`：Top-100 PR 未映射节点分类（mappable/needs_entity/ambiguous）+ spec 输出。
+- `boost-stub.py`：低 PR 映射节点 wikilink 注入建议（社区感知 + 现有链接排除）。
+
+### 测试
+
+- `tests/test_suggest_mappings.py`：14 个 unit tests。
+- `tests/test_orphan_report.py`：5 个 unit tests。
+- `tests/test_boost_stub.py`：6 个 unit tests。
+
+### 终态评分
+
+```
+总分: 118/120 (98%) A+
+raw=108 + bonus=10
+D8-D11: 40/40 ✅ 满分
+Ontology: 108 实体, 88 关系
+```
+
+---
+
+## v3.6.2 (2026-07-26)
+
+### Added
+
+- `canary-gate.py`: D8/D11 多源维度门禁规则。
+- `graph-test-suite.py`: `--quiet` CI 模式和维度失败退出码。
+- `tests/test_scorecard.py`: scorecard JSON schema 验证。
+- `CONTRIBUTING.md` 和 `CHANGELOG.md`。
+
+### Enhanced
+
+- `README.md`: 评分维度说明、API 文档和 CI 集成示例。
+- Scorecard JSON: 补充 `d8_detail` 和 `d11_detail` 字段。
+
+## v3.6.1 (2026-07-26)
+
+### Added
+
+- D9 consistency: ontology type 与 wiki theorist 映射。
+- `--debug` 模式（D8/D9/D10/D11/fusion/mappings）。
+- `D10_PRIMARY` 环境变量。
+- `tests/test_title_extraction.py`。
+- `references/ontology-population-sop.md`。
+
+### Changed
+
+- D8: 改为 PageRank Top-100 加权覆盖率（`D8_TOP_N` 可配置）。
+- `graph_loader.py`: unmapped entity stderr 警告。
+- Scorecard: 权重公式透明化。
+
+### Fixed
+
+- `graph_loader.py`: title regex 兼容无引号 frontmatter。

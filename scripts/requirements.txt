@@ -1,0 +1,7 @@
+# graph-wiki runtime dependencies
+# Requires Python >= 3.10
+# Requires SQLite >= 3.35 (stdlib sqlite3 with UPDATE ... RETURNING support)
+
+networkx>=3.0
+scipy>=1.6
+python-louvain>=0.16

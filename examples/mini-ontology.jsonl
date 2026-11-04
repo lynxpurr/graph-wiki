@@ -1,0 +1,87 @@
+{"op":"create","entity":{"id":"algorithms","type":"concept","properties":{"title":"Algorithms","theorist":"donald-knuth","description":"Finite sequences of well-defined instructions for computation."}}}
+{"op":"create","entity":{"id":"data-structures","type":"concept","properties":{"title":"Data Structures","theorist":"donald-knuth","description":"Specialized formats for organizing and storing data."}}}
+{"op":"create","entity":{"id":"sorting","type":"concept","properties":{"title":"Sorting","theorist":"donald-knuth","description":"Arranging elements in a defined order."}}}
+{"op":"create","entity":{"id":"recursion","type":"concept","properties":{"title":"Recursion","theorist":"donald-knuth","description":"Solving problems by self-referential function calls."}}}
+{"op":"create","entity":{"id":"computational-complexity","type":"concept","properties":{"title":"Computational Complexity","theorist":"donald-knuth","description":"Classifying problems by required time and space resources."}}}
+{"op":"create","entity":{"id":"hashing","type":"concept","properties":{"title":"Hashing","theorist":"donald-knuth","description":"Mapping data to fixed-size values via hash functions."}}}
+{"op":"create","entity":{"id":"graph-theory","type":"framework","properties":{"title":"Graph Theory","theorist":"donald-knuth","description":"Mathematical study of vertex-edge networks."}}}
+{"op":"create","entity":{"id":"lambda-calculus","type":"framework","properties":{"title":"Lambda Calculus","theorist":"alonzo-church","description":"Formal system for computation via function abstraction."}}}
+{"op":"create","entity":{"id":"donald-knuth","type":"person","properties":{"title":"Donald Knuth","theorist":"donald-knuth","description":"Author of The Art of Computer Programming who systematized and popularized rigorous algorithm analysis."}}}
+{"op":"create","entity":{"id":"alan-turing","type":"person","properties":{"title":"Alan Turing","theorist":"alan-turing","description":"Founder of theoretical computer science and computability theory."}}}
+{"op":"create","entity":{"id":"alonzo-church","type":"person","properties":{"title":"Alonzo Church","theorist":"alonzo-church","description":"Inventor of the lambda calculus and co-founder of the Church-Turing thesis."}}}
+{"op":"create","entity":{"id":"quicksort","type":"concept","properties":{"title":"Quicksort","theorist":"donald-knuth","description":"Divide-and-conquer sorting algorithm with O(n log n) average case."}}}
+{"op":"create","entity":{"id":"merge-sort","type":"concept","properties":{"title":"Merge Sort","theorist":"donald-knuth","description":"Stable divide-and-conquer sorting algorithm."}}}
+{"op":"create","entity":{"id":"big-o-notation","type":"concept","properties":{"title":"Big-O Notation","theorist":"donald-knuth","description":"Asymptotic upper bound notation for algorithmic complexity."}}}
+{"op":"create","entity":{"id":"breadth-first-search","type":"concept","properties":{"title":"Breadth-First Search","theorist":"donald-knuth","description":"Layer-by-layer graph traversal algorithm."}}}
+{"op":"create","entity":{"id":"linked-list","type":"concept","properties":{"title":"Linked List","theorist":"donald-knuth","description":"Linear data structure where each node points to the next."}}}
+{"op":"create","entity":{"id":"tree-structure","type":"concept","properties":{"title":"Tree Structure","theorist":"donald-knuth","description":"Hierarchical data structure with a root node and children."}}}
+{"op":"relate","entity":{"from":"algorithms","to":"data-structures","relation":"references"}}
+{"op":"relate","entity":{"from":"algorithms","to":"computational-complexity","relation":"references"}}
+{"op":"relate","entity":{"from":"algorithms","to":"sorting","relation":"references"}}
+{"op":"relate","entity":{"from":"algorithms","to":"recursion","relation":"references"}}
+{"op":"relate","entity":{"from":"algorithms","to":"donald-knuth","relation":"references"}}
+{"op":"relate","entity":{"from":"algorithms","to":"big-o-notation","relation":"references"}}
+{"op":"relate","entity":{"from":"data-structures","to":"algorithms","relation":"references"}}
+{"op":"relate","entity":{"from":"data-structures","to":"hashing","relation":"references"}}
+{"op":"relate","entity":{"from":"data-structures","to":"sorting","relation":"references"}}
+{"op":"relate","entity":{"from":"data-structures","to":"donald-knuth","relation":"references"}}
+{"op":"relate","entity":{"from":"sorting","to":"algorithms","relation":"references"}}
+{"op":"relate","entity":{"from":"sorting","to":"data-structures","relation":"references"}}
+{"op":"relate","entity":{"from":"sorting","to":"quicksort","relation":"references"}}
+{"op":"relate","entity":{"from":"sorting","to":"merge-sort","relation":"references"}}
+{"op":"relate","entity":{"from":"sorting","to":"big-o-notation","relation":"references"}}
+{"op":"relate","entity":{"from":"sorting","to":"computational-complexity","relation":"references"}}
+{"op":"relate","entity":{"from":"sorting","to":"donald-knuth","relation":"references"}}
+{"op":"relate","entity":{"from":"recursion","to":"algorithms","relation":"references"}}
+{"op":"relate","entity":{"from":"recursion","to":"sorting","relation":"references"}}
+{"op":"relate","entity":{"from":"recursion","to":"quicksort","relation":"references"}}
+{"op":"relate","entity":{"from":"recursion","to":"merge-sort","relation":"references"}}
+{"op":"relate","entity":{"from":"recursion","to":"lambda-calculus","relation":"references"}}
+{"op":"relate","entity":{"from":"computational-complexity","to":"algorithms","relation":"references"}}
+{"op":"relate","entity":{"from":"computational-complexity","to":"sorting","relation":"references"}}
+{"op":"relate","entity":{"from":"computational-complexity","to":"big-o-notation","relation":"references"}}
+{"op":"relate","entity":{"from":"computational-complexity","to":"alan-turing","relation":"references"}}
+{"op":"relate","entity":{"from":"computational-complexity","to":"donald-knuth","relation":"references"}}
+{"op":"relate","entity":{"from":"hashing","to":"data-structures","relation":"references"}}
+{"op":"relate","entity":{"from":"hashing","to":"algorithms","relation":"references"}}
+{"op":"relate","entity":{"from":"hashing","to":"donald-knuth","relation":"references"}}
+{"op":"relate","entity":{"from":"graph-theory","to":"algorithms","relation":"references"}}
+{"op":"relate","entity":{"from":"graph-theory","to":"data-structures","relation":"references"}}
+{"op":"relate","entity":{"from":"graph-theory","to":"breadth-first-search","relation":"references"}}
+{"op":"relate","entity":{"from":"graph-theory","to":"donald-knuth","relation":"references"}}
+{"op":"relate","entity":{"from":"lambda-calculus","to":"alan-turing","relation":"references"}}
+{"op":"relate","entity":{"from":"lambda-calculus","to":"recursion","relation":"references"}}
+{"op":"relate","entity":{"from":"lambda-calculus","to":"computational-complexity","relation":"references"}}
+{"op":"relate","entity":{"from":"lambda-calculus","to":"algorithms","relation":"references"}}
+{"op":"relate","entity":{"from":"donald-knuth","to":"algorithms","relation":"references"}}
+{"op":"relate","entity":{"from":"donald-knuth","to":"computational-complexity","relation":"references"}}
+{"op":"relate","entity":{"from":"donald-knuth","to":"big-o-notation","relation":"references"}}
+{"op":"relate","entity":{"from":"donald-knuth","to":"sorting","relation":"references"}}
+{"op":"relate","entity":{"from":"donald-knuth","to":"hashing","relation":"references"}}
+{"op":"relate","entity":{"from":"donald-knuth","to":"data-structures","relation":"references"}}
+{"op":"relate","entity":{"from":"donald-knuth","to":"recursion","relation":"references"}}
+{"op":"relate","entity":{"from":"alan-turing","to":"algorithms","relation":"references"}}
+{"op":"relate","entity":{"from":"alan-turing","to":"computational-complexity","relation":"references"}}
+{"op":"relate","entity":{"from":"alan-turing","to":"lambda-calculus","relation":"references"}}
+{"op":"relate","entity":{"from":"alan-turing","to":"graph-theory","relation":"references"}}
+{"op":"relate","entity":{"from":"quicksort","to":"sorting","relation":"references"}}
+{"op":"relate","entity":{"from":"quicksort","to":"recursion","relation":"references"}}
+{"op":"relate","entity":{"from":"quicksort","to":"big-o-notation","relation":"references"}}
+{"op":"relate","entity":{"from":"merge-sort","to":"sorting","relation":"references"}}
+{"op":"relate","entity":{"from":"merge-sort","to":"recursion","relation":"references"}}
+{"op":"relate","entity":{"from":"merge-sort","to":"big-o-notation","relation":"references"}}
+{"op":"relate","entity":{"from":"big-o-notation","to":"computational-complexity","relation":"references"}}
+{"op":"relate","entity":{"from":"big-o-notation","to":"algorithms","relation":"references"}}
+{"op":"relate","entity":{"from":"big-o-notation","to":"sorting","relation":"references"}}
+{"op":"relate","entity":{"from":"big-o-notation","to":"donald-knuth","relation":"references"}}
+{"op":"relate","entity":{"from":"breadth-first-search","to":"graph-theory","relation":"references"}}
+{"op":"relate","entity":{"from":"breadth-first-search","to":"algorithms","relation":"references"}}
+{"op":"relate","entity":{"from":"linked-list","to":"data-structures","relation":"is_a"}}
+{"op":"relate","entity":{"from":"donald-knuth","to":"linked-list","relation":"contributed"}}
+{"op":"relate","entity":{"from":"tree-structure","to":"data-structures","relation":"is_a"}}
+{"op":"relate","entity":{"from":"donald-knuth","to":"tree-structure","relation":"contributed"}}
+{"op":"relate","from":"computational-complexity","to":"data-structures","relation":"uses"}
+{"op":"relate","entity":{"from":"lambda-calculus","to":"alonzo-church","relation":"references"}}
+{"op":"relate","entity":{"from":"alonzo-church","to":"lambda-calculus","relation":"references"}}
+{"op":"relate","entity":{"from":"alonzo-church","to":"recursion","relation":"references"}}
+{"op":"relate","entity":{"from":"alonzo-church","to":"computational-complexity","relation":"references"}}

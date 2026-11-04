@@ -1,0 +1,24 @@
+__pycache__/
+.pytest_cache/
+.coverage
+*.pyc
+*.pyo
+*.bak
+.bak
+.graph_loader_safe.py
+.venv/
+.merge-conflicts.json
+.graph-baseline.json
+scripts/before.json
+scripts/after.json
+*.graphml
+*.gexf
+*.r1-backup
+*.deprecated
+rounds/
+data/*.jsonl
+
+# Guard against accidentally committing local/private corpora
+memory/
+*_private*
+*_confidential*

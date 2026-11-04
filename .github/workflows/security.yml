@@ -1,0 +1,115 @@
+name: security
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  secret-scan:
+    name: secret scan (gitleaks, full history)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: gitleaks
+        uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  static-analysis:
+    name: static analysis + dependency audit
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: install
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r scripts/requirements.txt -r tests/requirements-dev.txt
+          pip install bandit pip-audit
+      - name: bandit (medium and above)
+        run: bandit -r scripts -ll -q
+      - name: dependency CVE audit
+        run: pip-audit -r scripts/requirements.txt
+
+  tests:
+    name: test suite
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python-version: ["3.10", "3.12"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+      - name: install
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r scripts/requirements.txt -r tests/requirements-dev.txt
+      - name: pytest
+        run: python -m pytest -q
+
+  quickstart-smoke:
+    name: quickstart smoke (documented steps + documented scores)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: documented install steps
+        run: |
+          python3 -m venv .venv
+          .venv/bin/python -m pip install -q -r scripts/requirements.txt -r tests/requirements-dev.txt
+      - name: documented scores match actual output
+        run: |
+          set -euo pipefail
+          check () {
+            want="$1"; shift
+            got=$("$@" 2>/dev/null | python3 -c "import json,sys;d=json.load(sys.stdin);print(str(d['summary']['score'])+'/'+str(d['summary']['max_score']))")
+            echo "  expected $want | got $got"
+            if [ "$got" != "$want" ]; then
+              echo "::error::documented score drift: expected $want, got $got"
+              exit 1
+            fi
+          }
+          check "79/120" .venv/bin/python scripts/graph-test-suite.py --source wiki --wiki-root examples/mini-wiki --json
+          check "85/130" .venv/bin/python scripts/graph-test-suite.py --source ontology --ontology-path examples/mini-ontology.jsonl --json
+          check "100.14/130" .venv/bin/python scripts/graph-test-suite.py --source wiki,ontology --wiki-root examples/mini-wiki --ontology-path examples/mini-ontology.jsonl --json
+          check "113.61/140" .venv/bin/python scripts/graph-test-suite.py --source wiki,ontology,ragflow --wiki-root examples/mini-wiki --ontology-path examples/mini-ontology.jsonl --ragflow-path examples/mini-ragflow.jsonl --json
+      - name: --json stays pure even with stderr merged
+        run: |
+          .venv/bin/python scripts/graph-test-suite.py --source wiki,ontology             --wiki-root examples/mini-wiki --ontology-path examples/mini-ontology.jsonl --json 2>&1             | python3 -c "import json,sys; json.load(sys.stdin); print('merged-stream JSON OK')"
+
+  reproducibility:
+    name: score reproducibility (3x identical)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: install
+        run: |
+          python3 -m venv .venv
+          .venv/bin/python -m pip install -q -r scripts/requirements.txt -r tests/requirements-dev.txt
+      - name: same input, three runs, identical score
+        run: |
+          set -euo pipefail
+          for i in 1 2 3; do
+            .venv/bin/python scripts/graph-test-suite.py --source wiki,ontology               --wiki-root examples/mini-wiki --ontology-path examples/mini-ontology.jsonl --json 2>/dev/null               | python3 -c "import json,sys;d=json.load(sys.stdin);print(str(d['summary']['score'])+'/'+str(d['summary']['max_score']))"
+          done > /tmp/runs.txt
+          cat /tmp/runs.txt
+          if [ "$(sort -u /tmp/runs.txt | wc -l)" != "1" ]; then
+            echo "::error::score not reproducible across runs"
+            exit 1
+          fi
