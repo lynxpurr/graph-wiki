@@ -14,6 +14,11 @@ import subprocess, json, os, re, sys, argparse
 from datetime import datetime
 
 SCRIPTS_DIR = os.path.dirname(os.path.abspath(__file__))
+if SCRIPTS_DIR not in sys.path:
+    sys.path.insert(0, SCRIPTS_DIR)
+
+from baseline_paths import resolve_baseline  # noqa: E402  (shared resolver)
+
 PYTHON = os.environ.get("WIKI_GRAPH_PYTHON", sys.executable)
 
 WIKI_ROOT = os.environ.get("WIKI_ROOT", os.path.expanduser("~/wiki"))
@@ -47,22 +52,19 @@ def _count_by_severity(diagnosis):
     }
 
 
+def _baseline_resolution(source, ontology_path=None, wiki_root=None):
+    """解析基线路径（与 baseline-save / canary-gate 共用同一规则）。"""
+    return resolve_baseline(
+        source,
+        ontology_path=ontology_path or ONTOLOGY_PATH,
+        wiki_root=os.path.expanduser(wiki_root) if wiki_root else WIKI_ROOT,
+        default_dir=os.path.dirname(os.path.abspath(ONTOLOGY_PATH)),
+    )
+
+
 def _load_baseline(source, ontology_path=None, wiki_root=None):
     """Find regression baseline file based on source."""
-    sources = _source_names(source)
-    if len(sources) > 1:
-        if 'ontology' in sources and ontology_path:
-            base_dir = os.path.dirname(os.path.expanduser(ontology_path))
-        else:
-            base_dir = os.path.expanduser(wiki_root) if wiki_root else WIKI_ROOT
-        slug = '-'.join(sources)
-        baseline_path = os.path.join(base_dir, f".graph-baseline-{slug}.json")
-    elif sources == ["ontology"]:
-        base_dir = os.path.dirname(os.path.expanduser(ontology_path)) if ontology_path else os.path.dirname(ONTOLOGY_PATH)
-        baseline_path = os.path.join(base_dir, ".graph-baseline.json")
-    else:
-        base_dir = os.path.expanduser(wiki_root) if wiki_root else WIKI_ROOT
-        baseline_path = os.path.join(base_dir, ".regression-baseline.json")
+    baseline_path = _baseline_resolution(source, ontology_path, wiki_root).path
 
     if not os.path.exists(baseline_path):
         return {}, baseline_path
@@ -123,6 +125,7 @@ def check_regression(source, ontology_path=None, wiki_root=None,
                      ragflow_path=None):
     """Run all checks and return structured result."""
     baseline, baseline_path = _load_baseline(source, ontology_path, wiki_root)
+    resolution = _baseline_resolution(source, ontology_path, wiki_root)
     diag_result, diag_err = _run_diagnose(
         source, ontology_path, wiki_root, ragflow_path,
     )
@@ -156,6 +159,9 @@ def check_regression(source, ontology_path=None, wiki_root=None,
     for severity in ("P0", "P1", "P2"):
         current_count = current_severity[severity]
         baseline_count = baseline_severity.get(severity)
+        if baseline_count is None and baseline_severity:
+            # 基线带 severity 模式但未写零计数项 → 视为 0（旧基线/旧写入方）
+            baseline_count = 0
         if isinstance(baseline_count, int):
             if current_count > baseline_count:
                 alerts.append(
@@ -216,6 +222,13 @@ def check_regression(source, ontology_path=None, wiki_root=None,
     if test_err:
         errors.append(f"test-suite error: {test_err[:200]}")
 
+    # 无基线时必须显式失败，不能静默空转成 pass=true（issue #1 假绿护栏）。
+    if not baseline:
+        errors.append(
+            f"无基线: {baseline_path} 不存在或无法解析 — 回归对比未执行；"
+            f"请先运行 wiki_analyzer.py baseline-save --source {source}"
+        )
+
     # v3.1.1 (C5): pass = no alerts AND no errors (false-green fix)
     passed = len(alerts) == 0 and len(errors) == 0
 
@@ -225,6 +238,8 @@ def check_regression(source, ontology_path=None, wiki_root=None,
         "multi_source": multi_source,
         "diagnosis_summary": {"by_severity": current_severity},
         "baseline_path": baseline_path,
+        "baseline_found": bool(baseline),
+        "baseline_migration": resolution.migration_note,
         "checks": checks,
         "alerts": alerts,
         "errors": errors,
@@ -237,8 +252,12 @@ def format_report(result):
     lines = [
         f"📊 周检 — {result['source']} — {result['timestamp'][:19]}",
         f"基线: {result['baseline_path']}",
-        "",
     ]
+    if result.get("baseline_migration"):
+        lines.append(f"⚠️ {result['baseline_migration']}")
+    if not result.get("baseline_found", True):
+        lines.append("⚠️ (无基线) 回归对比未执行")
+    lines.append("")
     for c in result["checks"]:
         lines.append(f"  {c}")
     if result["errors"]:
@@ -251,7 +270,10 @@ def format_report(result):
         lines.append("🚨 告警:")
         for a in result["alerts"]:
             lines.append(f"  {a}")
-    else:
+    if not result.get("pass", True):
+        lines.append("")
+        lines.append("❌ 周检未通过（见上方告警/执行错误）")
+    elif not result["alerts"]:
         lines.append("")
         lines.append("✅ 全部指标正常，无退化")
     return "\n".join(lines)

@@ -101,6 +101,22 @@ cd /path/to/your/wiki
 | `canary-gate.py` | 质量门禁 | PASS/WARN/REVIEW/BLOCK 四态退出码 |
 | `weekly-health-check.py` | 周检自动化 | 评分回归检测 / 退行告警 / 基线对比 |
 
+### 回归基线路径（issue #1）
+
+`wiki_analyzer.py baseline-save`（写入方）、`weekly-health-check.py` 与 `canary-gate.py`
+（读取方）共用同一套解析规则（`scripts/baseline_paths.py`）：同一组
+`--source` / `--wiki-root` / `--ontology-path` 必然指向同一个文件。
+
+| 源 | 基线路径 |
+|----|---------|
+| 仅 `wiki` / `ragflow` | `<wiki_root>/.graph-baseline.json` |
+| 仅 `ontology` | `dirname(--ontology-path)/.graph-baseline.json` |
+| 多源 | `<base_dir>/.graph-baseline-<slug>.json`（`base_dir`：含 ontology 时为 ontology 目录，否则为 wiki 根） |
+
+旧版单源文件 `<wiki_root>/.regression-baseline.json` 在新文件不存在时仍会读取，
+并在输出中给出迁移提示。周检在**没有基线**时显式报 `(无基线)` 且 `pass: false`
+——回归对比未执行不算通过。
+
 ### graph-test-suite.py 退出码与验收阈值
 
 | 退出码 | 含义 |
