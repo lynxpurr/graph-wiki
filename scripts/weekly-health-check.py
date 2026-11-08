@@ -8,6 +8,10 @@
   python3 weekly-health-check.py --source ontology --ontology-path <path>
   python3 weekly-health-check.py --source ontology --json
   python3 weekly-health-check.py --source ontology --print-report
+  python3 weekly-health-check.py --source ontology --exit-zero  # 兼容旧行为
+
+退出码: 0=通过, 1=未通过（退化告警 / 无基线 / 基线损坏 / 内部执行错误）。
+`--exit-zero` 无条件返回 0（旧调用方的逃生开关），不影响判定结果本身。
 """
 
 import subprocess, json, os, re, sys, argparse
@@ -50,6 +54,28 @@ def _count_by_severity(diagnosis):
         )
         for severity in ("P0", "P1", "P2")
     }
+
+
+def _baseline_severity(baseline):
+    """取出基线里的 per-severity 计数；无法比较时返回 None。
+
+    三种输入语义必须区分（issue #1 假绿第二分支）:
+
+    * 空对象 ``{}`` —— **有信息量**：写入方会规范化写入全键，空对象等于
+      「各严重度均为 0」，比较必须照常发生（P0 增加仍要告警）。
+    * 缺 ``by_severity`` / 缺 ``diagnosis_summary`` / 值为 ``None`` ——
+      **无信息量**：无法比较，不能静默当成 0（那正是假绿通道）。
+    * 正常字典 —— 逐 severity 比较，缺某个键时回退 0（旧写入方行为）。
+    """
+    if not isinstance(baseline, dict):
+        return None
+    summary = baseline.get("diagnosis_summary")
+    if not isinstance(summary, dict):
+        return None
+    by_severity = summary.get("by_severity")
+    if not isinstance(by_severity, dict):
+        return None
+    return by_severity
 
 
 def _baseline_resolution(source, ontology_path=None, wiki_root=None):
@@ -153,16 +179,33 @@ def check_regression(source, ontology_path=None, wiki_root=None,
     # ── Diagnostic issue counts by severity ──
     diagnosis = diag_result.get("diagnosis", [])
     current_severity = _count_by_severity(diagnosis)
-    baseline_severity = baseline.get(
-        "diagnosis_summary", {},
-    ).get("by_severity", {})
-    for severity in ("P0", "P1", "P2"):
-        current_count = current_severity[severity]
-        baseline_count = baseline_severity.get(severity)
-        if baseline_count is None and baseline_severity:
-            # 基线带 severity 模式但未写零计数项 → 视为 0（旧基线/旧写入方）
-            baseline_count = 0
-        if isinstance(baseline_count, int):
+    baseline_severity = _baseline_severity(baseline)
+    severity_errors = []
+
+    if baseline_severity is None:
+        # 键缺失 / None ⇒ 无法比较。无基线文件本身已由下面的「无基线」错误
+        # 覆盖，这里只在基线存在却缺严重度数据时补一条明确错误。
+        if baseline:
+            severity_errors.append(
+                "基线缺少严重度数据，无法比较: "
+                "diagnosis_summary.by_severity 不可用 — P0/P1/P2 回归对比未执行；"
+                f"请重新运行 wiki_analyzer.py baseline-save --source {source}"
+            )
+        for severity in ("P0", "P1", "P2"):
+            checks.append(f"{severity} 问题: {current_severity[severity]} (无基线)")
+    else:
+        for severity in ("P0", "P1", "P2"):
+            current_count = current_severity[severity]
+            # 空对象 {} 与「旧基线缺某个键」都回退 0（{} = 全零，有信息量）。
+            baseline_count = baseline_severity.get(severity)
+            if baseline_count is None:
+                baseline_count = 0
+            if not isinstance(baseline_count, int) or isinstance(baseline_count, bool):
+                severity_errors.append(
+                    f"基线严重度数据无效 ({severity}={baseline_count!r})，无法比较"
+                )
+                checks.append(f"{severity} 问题: {current_count} (无基线)")
+                continue
             if current_count > baseline_count:
                 alerts.append(
                     f"⚠️ {severity} 问题增加: {baseline_count} → {current_count}"
@@ -170,8 +213,6 @@ def check_regression(source, ontology_path=None, wiki_root=None,
             checks.append(
                 f"{severity} 问题: {current_count} (基线 {baseline_count})"
             )
-        else:
-            checks.append(f"{severity} 问题: {current_count} (无基线)")
 
     # ── Graph stats (unified path for both sources) ──
     gs = diag_result.get("graph_stats", {})
@@ -228,6 +269,7 @@ def check_regression(source, ontology_path=None, wiki_root=None,
             f"无基线: {baseline_path} 不存在或无法解析 — 回归对比未执行；"
             f"请先运行 wiki_analyzer.py baseline-save --source {source}"
         )
+    errors.extend(severity_errors)
 
     # v3.1.1 (C5): pass = no alerts AND no errors (false-green fix)
     passed = len(alerts) == 0 and len(errors) == 0
@@ -283,7 +325,11 @@ def format_report(result):
 # CLI
 # ══════════════════════════════════════════════════
 
-if __name__ == "__main__":
+EXIT_PASS = 0
+EXIT_FAIL = 1
+
+
+def _build_parser():
     parser = argparse.ArgumentParser(description="Wiki/Ontology 质量周检")
     parser.add_argument("--source", default="wiki",
                         help="wiki, ontology, ragflow, or comma-separated sources")
@@ -297,7 +343,14 @@ if __name__ == "__main__":
                         help="JSON 输出")
     parser.add_argument("--print-report", action="store_true",
                         help="打印人类可读报告到 stdout")
-    args = parser.parse_args()
+    parser.add_argument("--exit-zero", action="store_true",
+                        help="无论判定结果如何都以 0 退出（旧调用方逃生开关）")
+    return parser
+
+
+def main(argv=None):
+    """Run the weekly check and return an exit code (0=pass, 1=fail)."""
+    args = _build_parser().parse_args(argv)
 
     result = check_regression(
         source=args.source,
@@ -308,7 +361,13 @@ if __name__ == "__main__":
 
     if args.json:
         print(json.dumps(result, ensure_ascii=False, indent=2))
-    elif args.print_report:
-        print(format_report(result))
     else:
         print(format_report(result))
+
+    if args.exit_zero:
+        return EXIT_PASS
+    return EXIT_PASS if result.get("pass") else EXIT_FAIL
+
+
+if __name__ == "__main__":
+    sys.exit(main())

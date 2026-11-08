@@ -1,5 +1,26 @@
 # Changelog
 
+## Unreleased — `weekly-health-check` exit codes + severity baseline semantics
+
+### Changed (behavior change)
+
+- **`weekly-health-check.py` now exits non-zero when the check fails** (0 = pass, 1 = fail:
+  regression alerts, missing baseline, corrupt baseline, missing severity data, internal errors).
+  Previously the process always exited 0 and the verdict lived only in the text output, so
+  cron/CI reading `$?` saw a false green. `--json` keeps stdout as pure JSON and the exit code
+  still reflects the verdict.
+- **`--exit-zero` escape hatch**: forces exit 0 for callers that relied on the old behavior.
+  It does not alter the report or the `pass` field. Combinable with `--json`.
+
+### Fixed
+
+- **`by_severity: {}` no longer skips severity comparison**: an empty mapping means "all
+  severities are zero" (the writer always normalises every P0/P1/P2 key), so a P0 increase
+  against an empty-object baseline now raises an alert instead of passing silently.
+- **Missing severity data fails loudly**: a baseline without `diagnosis_summary`, without
+  `by_severity`, or with `by_severity: null` is now reported as an error ("基线缺少严重度数据，
+  无法比较") and fails the check instead of being treated as "no baseline, nothing to compare".
+
 ## v3.10.1 (2026-11-06) — Documentation Coherence + CLI Integrity
 
 ### Fixed

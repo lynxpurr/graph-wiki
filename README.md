@@ -99,7 +99,7 @@ cd /path/to/your/wiki
 | `graph-diagnose.py` | 结构诊断 | D1-D7 结构问题 + 多源 D8-D10 融合指标 |
 | `graph-compute.py` | 图算法 | PageRank Top15 / 社区 / 桥接 / 最短路 |
 | `canary-gate.py` | 质量门禁 | PASS/WARN/REVIEW/BLOCK 四态退出码 |
-| `weekly-health-check.py` | 周检自动化 | 评分回归检测 / 退行告警 / 基线对比 |
+| `weekly-health-check.py` | 周检自动化 | 评分回归检测 / 退行告警 / 基线对比 / 0-1 退出码 |
 
 ### 回归基线路径（issue #1）
 
@@ -116,6 +116,23 @@ cd /path/to/your/wiki
 旧版单源文件 `<wiki_root>/.regression-baseline.json` 在新文件不存在时仍会读取，
 并在输出中给出迁移提示。周检在**没有基线**时显式报 `(无基线)` 且 `pass: false`
 ——回归对比未执行不算通过。
+
+### weekly-health-check.py 退出码（行为变更）
+
+周检现在会按判定结果设置退出码，cron / CI 直接读 `$?` 即可，不必再 grep 文本：
+
+| 退出码 | 含义 |
+|--------|------|
+| 0 | 判定通过（无告警且无执行错误） |
+| 1 | 判定未通过——退化告警、无基线、基线损坏（非法 JSON）、基线缺严重度数据、内部执行错误 |
+
+`--json` 模式下同样适用：JSON 照常打到 stdout，退出码仍反映判定结果
+（`--json | jq` 的管道状态请分别检查，`$?` 取的是管道最后一环）。
+
+**行为变更**：旧版本无论判定如何都退出 0，只看退出码的调用方会把失败当成功。
+如果某个调用方依赖旧行为（例如「周检失败也要继续后续步骤」），请显式加上
+`--exit-zero`：它无条件返回 0，但**不改变**输出文本与 `pass` 字段——判定结果
+依旧如实打印。该开关可与 `--json` 组合使用。
 
 ### graph-test-suite.py 退出码与验收阈值
 
