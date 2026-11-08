@@ -134,10 +134,15 @@ def test_json_mode_exit_zero_flag_forces_success_status(baselined_wiki: Path):
 
 
 def test_empty_by_severity_baseline_does_not_hide_new_p0(baselined_wiki: Path):
-    """End-to-end repro: `by_severity: {}` must not skip the P0 comparison."""
+    """End-to-end repro: `by_severity: {}` must not skip the P0 comparison.
+
+    真正的「零问题」基线是 {by_severity: {}, total: 0}（旧写入方不补零键时的
+    真实产物），此时按全零比较，P0 增加必须告警。
+    """
     baseline_path = baselined_wiki / ".graph-baseline.json"
     baseline = json.loads(baseline_path.read_text(encoding="utf-8"))
     baseline["diagnosis_summary"]["by_severity"] = {}
+    baseline["diagnosis_summary"]["total"] = 0
     baseline_path.write_text(
         json.dumps(baseline, ensure_ascii=False, indent=2), encoding="utf-8",
     )
@@ -161,3 +166,37 @@ date_modified: 2026-07-20
     assert proc.returncode == 1, proc.stdout + proc.stderr
     assert payload["pass"] is False
     assert any("P0 问题增加" in alert for alert in payload["alerts"])
+
+
+def test_inconsistent_empty_by_severity_fails_without_fabricating_baseline(
+    baselined_wiki: Path,
+):
+    """End-to-end: `{}` + total>0 ⇒ 判失败，且不得伪造「0 → N」的假增量。"""
+    baseline_path = baselined_wiki / ".graph-baseline.json"
+    baseline = json.loads(baseline_path.read_text(encoding="utf-8"))
+    baseline["diagnosis_summary"]["by_severity"] = {}
+    baseline["diagnosis_summary"]["total"] = 7  # 声称有问题却说不出分级
+    baseline_path.write_text(
+        json.dumps(baseline, ensure_ascii=False, indent=2), encoding="utf-8",
+    )
+    (baselined_wiki / "concepts" / "rot.md").write_text(
+        """---
+title: "Rot"
+source_theorist: systems
+date_created: 2026-07-20
+date_modified: 2026-07-20
+---
+# Rot
+
+[[nope-a]] [[nope-b]] [[nope-c]] [[nope-d]] [[nope-e]] [[nope-f]]
+""",
+        encoding="utf-8",
+    )
+
+    proc = _weekly(baselined_wiki, "--json")
+
+    payload = json.loads(proc.stdout)
+    assert proc.returncode == 1, proc.stdout + proc.stderr
+    assert payload["pass"] is False
+    assert any("不自洽" in error for error in payload["errors"])
+    assert not any("P0 问题增加" in alert for alert in payload["alerts"])

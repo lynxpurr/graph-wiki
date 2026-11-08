@@ -57,25 +57,47 @@ def _count_by_severity(diagnosis):
 
 
 def _baseline_severity(baseline):
-    """取出基线里的 per-severity 计数；无法比较时返回 None。
+    """取出基线里的 per-severity 计数。
 
-    三种输入语义必须区分（issue #1 假绿第二分支）:
+    返回 ``(counts, reason)``：``counts`` 为 None 时 ``reason`` 说明为什么无法
+    比较；两者互斥（有 counts 时 reason 为 None）。
 
-    * 空对象 ``{}`` —— **有信息量**：写入方会规范化写入全键，空对象等于
-      「各严重度均为 0」，比较必须照常发生（P0 增加仍要告警）。
+    输入语义（issue #1 假绿第二分支）:
+
+    * 正常字典 —— 逐 severity 比较，缺某个键时回退 0（旧写入方行为）。
+    * 空对象 ``{}`` —— **用 ``total`` 交叉验证**。旧写入方在「零问题」时确实
+      会产出 ``{}``（不补零），此时 ``total == 0``，按「各严重度为 0」正常比较。
+      但若 ``total > 0`` 却没有任何分级明细，数据就不自洽——不能凭空把基线
+      当作 0（那会制造「0 → N」的假增量，等于伪造基线），应判定无法比较。
     * 缺 ``by_severity`` / 缺 ``diagnosis_summary`` / 值为 ``None`` ——
       **无信息量**：无法比较，不能静默当成 0（那正是假绿通道）。
-    * 正常字典 —— 逐 severity 比较，缺某个键时回退 0（旧写入方行为）。
     """
     if not isinstance(baseline, dict):
-        return None
+        return None, "基线缺少严重度数据，无法比较: 基线不是 JSON 对象"
     summary = baseline.get("diagnosis_summary")
     if not isinstance(summary, dict):
-        return None
+        return None, "基线缺少严重度数据，无法比较: diagnosis_summary 不可用"
     by_severity = summary.get("by_severity")
     if not isinstance(by_severity, dict):
-        return None
-    return by_severity
+        return None, (
+            "基线缺少严重度数据，无法比较: diagnosis_summary.by_severity 不可用"
+        )
+    if not by_severity:
+        total = summary.get("total")
+        is_int = isinstance(total, int) and not isinstance(total, bool)
+        if is_int and total == 0:
+            # 旧写入方在零问题时的真实形态：空明细 + total=0，按全零比较
+            return {}, None
+        if is_int:
+            return None, (
+                "基线严重度数据不自洽: diagnosis_summary.total="
+                f"{total} 但 by_severity 为空，无法确定各严重度的基线值"
+            )
+        return None, (
+            "基线缺少严重度数据，无法比较: by_severity 为空且缺少 "
+            "diagnosis_summary.total，无法判断是「零问题」还是数据缺失"
+        )
+    return by_severity, None
 
 
 def _baseline_resolution(source, ontology_path=None, wiki_root=None):
@@ -179,16 +201,15 @@ def check_regression(source, ontology_path=None, wiki_root=None,
     # ── Diagnostic issue counts by severity ──
     diagnosis = diag_result.get("diagnosis", [])
     current_severity = _count_by_severity(diagnosis)
-    baseline_severity = _baseline_severity(baseline)
+    baseline_severity, severity_reason = _baseline_severity(baseline)
     severity_errors = []
 
     if baseline_severity is None:
-        # 键缺失 / None ⇒ 无法比较。无基线文件本身已由下面的「无基线」错误
-        # 覆盖，这里只在基线存在却缺严重度数据时补一条明确错误。
+        # 无法比较（键缺失 / None / 空且 total 不自洽）。无基线文件本身已由
+        # 下面的「无基线」错误覆盖，这里只在基线存在却无法比较时补一条明确错误。
         if baseline:
             severity_errors.append(
-                "基线缺少严重度数据，无法比较: "
-                "diagnosis_summary.by_severity 不可用 — P0/P1/P2 回归对比未执行；"
+                f"{severity_reason} — P0/P1/P2 回归对比未执行；"
                 f"请重新运行 wiki_analyzer.py baseline-save --source {source}"
             )
         for severity in ("P0", "P1", "P2"):

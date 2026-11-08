@@ -87,11 +87,22 @@ def test_weekly_health_alerts_on_multi_source_coverage_and_conflicts(
 # regression detection.
 
 def _write_baseline(wiki_root, by_severity=_baseline()["diagnosis_summary"]["by_severity"],
-                    *, drop_summary=False, null_value=False, drop_key=False):
+                    *, drop_summary=False, null_value=False, drop_key=False,
+                    total=None, omit_total=False):
+    # 真实写入方总会同时写 diagnosis_summary.total。空 by_severity 要靠它区分
+    # 「零问题」与「数据缺失/不自洽」，所以夹具也必须带上（omit_total 模拟缺失）。
+    if total is None:
+        total = sum(
+            n for n in (by_severity or {}).values()
+            if isinstance(n, int) and not isinstance(n, bool)
+        )
+    summary = {"by_severity": by_severity}
+    if not omit_total:
+        summary["total"] = total
     baseline = {
         "scores": {"total": 80},
         "graph_stats": {"nodes": 4, "edges": 4},
-        "diagnosis_summary": {"by_severity": by_severity},
+        "diagnosis_summary": summary,
     }
     if drop_summary:
         baseline.pop("diagnosis_summary")
@@ -202,3 +213,34 @@ def test_empty_by_severity_with_no_change_passes(monkeypatch,
     assert result["alerts"] == []
     assert result["errors"] == []
     assert "P0 问题: 0 (基线 0)" in result["checks"]
+
+
+def test_empty_by_severity_with_inconsistent_total_fails(monkeypatch,
+                                                         load_script_module,
+                                                         tmp_path):
+    """`{}` + total>0 ⇒ 数据不自洽，判失败，且不得伪造「0 → N」的假增量。"""
+    weekly = load_script_module("weekly-health-check.py")
+    wiki_root = _write_baseline(tmp_path / "wiki", by_severity={}, total=3)
+
+    result = _run_check(monkeypatch, weekly, wiki_root, _diagnosis_with(p0=6))
+
+    assert result["pass"] is False
+    assert any("不自洽" in error for error in result["errors"])
+    # 不能凭空把基线当成 0 去报增量——那等于伪造基线
+    assert not any("P0 问题增加" in alert for alert in result["alerts"])
+    assert any("(无基线)" in check for check in result["checks"])
+
+
+def test_empty_by_severity_without_total_is_indeterminate(monkeypatch,
+                                                          load_script_module,
+                                                          tmp_path):
+    """`{}` 且缺 total ⇒ 无法判断是零问题还是数据缺失，判失败而非静默。"""
+    weekly = load_script_module("weekly-health-check.py")
+    wiki_root = _write_baseline(tmp_path / "wiki", by_severity={}, omit_total=True)
+
+    result = _run_check(monkeypatch, weekly, wiki_root, _diagnosis_with(p0=6))
+
+    assert result["pass"] is False
+    assert any("无法判断是「零问题」还是数据缺失" in error
+               for error in result["errors"])
+    assert not any("P0 问题增加" in alert for alert in result["alerts"])
