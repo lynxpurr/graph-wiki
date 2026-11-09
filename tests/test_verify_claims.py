@@ -499,6 +499,39 @@ def test_block_inside_a_fence_is_named_as_such(tmp_path):
     assert "inside a code fence" in (out.stdout + out.stderr)
 
 
+def test_blockquoted_example_is_not_a_second_block(tmp_path):
+    """X4: a block quote is a quotation container, like a fence — every level.
+
+    A quoted example of the block must not count as a second claims block."""
+    body = (
+        "<!-- claims:begin\n"
+        "json-eq: linkrot_summary.total_broken == 3\n"
+        "claims:end -->\n"
+        "\n"
+        "Quoting the template inside a block quote is help, not smuggling:\n"
+        "\n"
+        "{q}<!-- claims:begin\n"
+        "{q}json: <path>\n"
+        "{q}claims:end -->\n"
+    )
+    for q in ("> ", ">> ", "> > "):
+        out = _run(body.format(q=q), tmp_path)
+        assert out.returncode == 0, q + out.stdout + out.stderr
+
+
+def test_block_inside_a_block_quote_is_named_as_such(tmp_path):
+    """X4: a block swallowed by a block quote must say why, not just say not found."""
+    for q in ("> ", ">> ", "> > "):
+        body = (
+            "{q}<!-- claims:begin\n"
+            "{q}json-eq: linkrot_summary.total_broken == 3\n"
+            "{q}claims:end -->\n"
+        ).format(q=q)
+        out = _run(body, tmp_path)
+        assert out.returncode == 2, q + out.stdout + out.stderr
+        assert "block quote" in (out.stdout + out.stderr)
+
+
 def test_code_change_requires_a_value_assertion(tmp_path):
     """Round 5 W1: a hollow block of existence-only claims looked green."""
     body = (

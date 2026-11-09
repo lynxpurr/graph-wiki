@@ -26,7 +26,10 @@ Fail-closed rules:
 
 Marker discipline: a marker only counts when it occupies its own line. Text that
 merely mentions the marker inline is prose, not a block. Zero-width characters are
-stripped before counting, so a disguised marker cannot hide a block.
+stripped before counting, so a disguised marker cannot hide a block. A code fence
+and a block quote are both quotation containers: a marker inside either reads as
+a quotation, not a claim — and when nothing usable remains, the error names the
+container instead of just saying the block is missing.
 
 Exit codes: 0 all claims hold, 1 a claim failed, 2 the block is missing/malformed.
 """
@@ -57,6 +60,12 @@ MARKER_END_KEY = "claims:end-->"
 INVISIBLE_CATEGORIES = ("C", "Z", "M")
 
 FENCE_OPEN_RE = re.compile(r"^[ \t]*(`{3,}|~{3,})(.*)$")
+
+# A block-quote prefix on the visible form is a leading run of '>' characters:
+# visible_key already strips every spacing character, so '> ', '>> ' and '> > '
+# all reduce to this one shape (X4 — same one-canonical-string principle as the
+# marker keys below).
+QUOTE_PREFIX_RE = re.compile(r"^>+")
 
 
 def visible_key(line: str) -> str:
@@ -96,8 +105,21 @@ def fence_mask(lines: list[str]) -> list[bool]:
     return mask
 
 
+def strip_quote_prefix(line: str) -> str:
+    """The line as it reads once a leading block-quote prefix is removed.
+
+    Runs on the visible form (same lens that defines a marker), so a quoted
+    marker is recognised however it was padded. Lines that do not start with
+    '>' come back unchanged and can never match a marker key this way.
+    """
+    visible = visible_key(line)
+    m = QUOTE_PREFIX_RE.match(visible)
+    return visible[m.end():] if m else visible
+
+
 def extract_claims(body: str) -> tuple[list[str], str | None]:
-    """Return (claims, error). A marker is a whole line, outside any code fence."""
+    """Return (claims, error). A marker is a whole line, outside any code fence
+    or block quote."""
     lines = body.splitlines()
     mask = fence_mask(lines)
     begins = [i for i, ln in enumerate(lines) if visible_key(ln) == MARKER_BEGIN_KEY]
@@ -107,6 +129,17 @@ def extract_claims(body: str) -> tuple[list[str], str | None]:
             return [], (
                 "the claims block sits inside a code fence, so it reads as a "
                 "quotation rather than a claim. Move it out of the fence."
+            )
+        # Here no line matches the begin key exactly, so anything matching after
+        # the prefix strip was genuinely quoted. A '>' at line start inside a
+        # fence is fence content, not a quote — fence-masked lines stay out.
+        quoted = [i for i, ln in enumerate(lines)
+                  if not mask[i] and strip_quote_prefix(ln) == MARKER_BEGIN_KEY]
+        if quoted:
+            return [], (
+                "the claims block sits inside a block quote (lines start with "
+                "'>'), so it reads as a quotation rather than a claim. Move it "
+                "out of the block quote: remove the leading '>' characters."
             )
         return [], "no claims block found in PR body"
     if len(unfenced) > 1:
