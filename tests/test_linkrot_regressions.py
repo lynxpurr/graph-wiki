@@ -80,9 +80,12 @@ def test_duplicate_links_counted_not_duplicated(load_script_module, tmp_path):
     _write(root, "a.md", "[[missing-page]]\n[[missing-page]]\n[[missing-page]]\n")
     diag = load_script_module("graph-diagnose.py")
     result = diag.diagnose_linkrot(None, {}, wiki_root=str(root))
-    assert result["total_broken"] == 1, result
+    # issue #16: total_broken is the raw reference count; the three fields must
+    # satisfy total == unique + duplicated.
+    assert result["total_broken"] == 3, result
     assert result["unique_broken"] == 1
     assert result["duplicated_entries"] == 2
+    assert result["total_broken"] == result["unique_broken"] + result["duplicated_entries"]
     entry = result["details"][0]["broken_targets"][0]
     assert entry["target"] == "missing-page"
     assert entry["occurrences"] == 3
@@ -194,10 +197,11 @@ def test_same_target_across_sources_stays_two_items(load_script_module, tmp_path
     diag = load_script_module("graph-diagnose.py")
     result = diag.diagnose_linkrot(None, {}, wiki_root=str(root))
     assert result["unique_broken"] == 2, result
-    assert result["total_broken"] == 2, result
+    assert result["total_broken"] == 3, result   # 2 refs in a.md + 1 in b.md
     # one repeat inside a.md, none inside b.md
     assert result["duplicated_entries"] == 1, result
     assert result["entries_with_duplicates"] == 1, result
+    assert result["total_broken"] == result["unique_broken"] + result["duplicated_entries"]
 
 
 def test_index_source_exemption_is_consistent(load_script_module, tmp_path):
