@@ -200,3 +200,72 @@ def test_no_claims_allowed_for_docs_only(tmp_path):
     out = _run(body, tmp_path, changed=["README.md"])
     assert out.returncode == 0, out.stdout + out.stderr
     assert "no-claims" in out.stdout
+
+def test_no_claims_rejected_when_workflow_changed(tmp_path):
+    """Round-3 hole: a CI workflow edit is behaviour, not prose."""
+    body = (
+        "<!-- claims:begin\n"
+        "no-claims: 只调整了 CI 工作流的注释排版\n"
+        "claims:end -->\n"
+    )
+    out = _run(body, tmp_path, changed=[".github/workflows/claims.yml"])
+    assert out.returncode == 1, out.stdout + out.stderr
+    assert "a skip is not allowed" in out.stdout
+
+
+def test_no_claims_rejected_when_dependency_changed(tmp_path):
+    """Round-3 hole: dependency pins change behaviour too."""
+    body = (
+        "<!-- claims:begin\n"
+        "no-claims: 只是升级了依赖版本号而已\n"
+        "claims:end -->\n"
+    )
+    out = _run(body, tmp_path, changed=["requirements.txt"])
+    assert out.returncode == 1, out.stdout + out.stderr
+    assert "a skip is not allowed" in out.stdout
+
+
+def test_no_claims_rejected_on_empty_changed_list(tmp_path):
+    """Round-3 hole: an empty diff list made every skip look safe."""
+    body = (
+        "<!-- claims:begin\n"
+        "no-claims: 这次什么都没改，放心\n"
+        "claims:end -->\n"
+    )
+    out = _run(body, tmp_path, changed=[])
+    assert out.returncode == 1, out.stdout + out.stderr
+    assert "changed-file list is empty" in out.stdout
+
+
+def test_json_eq_rejects_float_for_int(tmp_path):
+    """Round-3 hole: 2 == 2.0 in Python, so a float could assert an int."""
+    body = (
+        "<!-- claims:begin\n"
+        "json-eq: linkrot_summary.unique_broken == 2.0\n"
+        "claims:end -->\n"
+    )
+    out = _run(body, tmp_path)
+    assert out.returncode == 1, out.stdout + out.stderr
+    assert "expected 2.0" in out.stdout
+
+
+def test_json_eq_rejects_string_for_int(tmp_path):
+    """A quoted number is a different claim than a number."""
+    body = (
+        "<!-- claims:begin\n"
+        "json-eq: linkrot_summary.unique_broken == \"2\"\n"
+        "claims:end -->\n"
+    )
+    out = _run(body, tmp_path)
+    assert out.returncode == 1, out.stdout + out.stderr
+
+
+def test_json_eq_accepts_matching_int(tmp_path):
+    """Control case: the fix must not break honest integer claims."""
+    body = (
+        "<!-- claims:begin\n"
+        "json-eq: linkrot_summary.unique_broken == 2\n"
+        "claims:end -->\n"
+    )
+    out = _run(body, tmp_path)
+    assert out.returncode == 0, out.stdout + out.stderr

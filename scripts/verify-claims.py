@@ -37,7 +37,8 @@ DIAGNOSE = REPO_ROOT / "scripts" / "graph-diagnose.py"
 DEFAULT_FIXTURE = REPO_ROOT / "tests" / "fixtures" / "claims-wiki"
 BEGIN = "<!-- claims:begin"
 END = "claims:end -->"
-CODE_PREFIXES = ("scripts/", "tests/")
+CODE_PREFIXES = ("scripts/", "tests/", ".github/", "examples/")
+CODE_SUFFIXES = (".py", ".yml", ".yaml", ".toml", ".txt", ".cfg", ".ini", ".sh")
 
 
 def extract_claims(body: str) -> tuple[list[str], str | None]:
@@ -103,7 +104,12 @@ def run_diagnose(wiki_root: Path) -> dict:
 
 
 def is_code_path(path: str) -> bool:
-    return path.startswith(CODE_PREFIXES) or path.endswith(".py")
+    """Anything whose change can alter behaviour, not just .py files.
+
+    Issue found while attacking round 3: a PR touching .github/workflows or a
+    dependency file could still claim no-claims and skip every check.
+    """
+    return path.startswith(CODE_PREFIXES) or path.endswith(CODE_SUFFIXES)
 
 
 def check_claim(claim: str, data: dict, changed_files, is_template_copy: bool):
@@ -121,8 +127,14 @@ def check_claim(claim: str, data: dict, changed_files, is_template_copy: bool):
             expected = json.loads(raw)
         except json.JSONDecodeError:
             expected = raw
-        if value != expected:
-            return False, "json-eq", f"{path} = {value!r}, expected {expected!r}"
+        # Strict type comparison: 2 and 2.0 and "2" are different claims. Loose
+        # equality let a float assert an int, which is the same class of ambiguity
+        # this gate exists to remove.
+        if type(value) is not type(expected) or value != expected:
+            return False, "json-eq", (
+                f"{path} = {value!r} ({type(value).__name__}), ",
+                f"expected {expected!r} ({type(expected).__name__})"
+            )
         return True, "json-eq", f"{path} == {json.dumps(expected, ensure_ascii=False)}"
     if claim.startswith("json:"):
         path = claim[len("json:"):].strip()
@@ -156,6 +168,10 @@ def check_claim(claim: str, data: dict, changed_files, is_template_copy: bool):
         if changed_files is None:
             return False, "no-claims", (
                 "cannot validate a skip without --changed-files; pass it or write real claims"
+            )
+        if not changed_files:
+            return False, "no-claims", (
+                "changed-file list is empty; cannot tell whether code changed (fail-closed)"
             )
         code = [f for f in changed_files if is_code_path(f)]
         if code:
