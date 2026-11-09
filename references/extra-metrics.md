@@ -97,7 +97,8 @@ DEEPSEEK_API_KEY=sk-xxx python3 extra-metrics.py --selfcheck --json
 
 ## 接入周检
 
-在 `.regression-baseline.json` 的 `diagnose` 块中添加：
+在 `.graph-baseline.json` 的 `diagnose` 块中添加（旧版单源文件名
+`.regression-baseline.json` 仍向后兼容可读）：
 
 ```json
 "outlink_low": 45,

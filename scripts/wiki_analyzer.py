@@ -15,6 +15,7 @@ import os, sys, json, subprocess
 from pathlib import Path
 from datetime import datetime, timezone
 
+from baseline_paths import resolve_baseline, resolve_primary_path
 from scorecard import build_scorecard
 from utils import atomic_append_jsonl, atomic_write
 
@@ -52,13 +53,33 @@ def _source_names(source: str | list[str]) -> list[str]:
     return names
 
 
-def _baseline_path_for_source(source: str | list[str]) -> str:
-    sources = _source_names(source)
-    if len(sources) == 1:
-        return BASELINE_PATH
-    return os.path.join(
-        os.path.dirname(BASELINE_PATH),
-        f".graph-baseline-{'-'.join(sources)}.json",
+def _baseline_path_for_source(source: str | list[str], ontology_path: str = None,
+                              wiki_root: str = None) -> str:
+    """基线路径唯一解析入口（见 baseline_paths.py，issue #1）。
+
+    单源 wiki/ragflow → <wiki_root>/.graph-baseline.json
+    仅 ontology      → dirname(ontology_path)/.graph-baseline.json
+    多源             → <base_dir>/.graph-baseline-<slug>.json
+
+    未显式给出路径参数时回退到 BASELINE_PATH 所在目录（保持既有默认行为，
+    也让测试可以通过 monkeypatch BASELINE_PATH 控制落点）。
+    """
+    return resolve_primary_path(
+        source,
+        ontology_path=ontology_path,
+        wiki_root=wiki_root,
+        default_dir=os.path.dirname(BASELINE_PATH),
+    )
+
+
+def _baseline_resolution(source: str | list[str], ontology_path: str = None,
+                         wiki_root: str = None):
+    """读取用解析（含旧 .regression-baseline.json 回退 + 迁移提示）。"""
+    return resolve_baseline(
+        source,
+        ontology_path=ontology_path,
+        wiki_root=wiki_root,
+        default_dir=os.path.dirname(BASELINE_PATH),
     )
 
 
@@ -124,13 +145,27 @@ def run_test_suite(source: str = "ontology", ontology_path: str = None,
     result = subprocess.run(
         cmd, input=input_payload, capture_output=True, text=True, timeout=120,
     )
+    payload = None
+    if result.stdout.strip():
+        try:
+            payload = json.loads(result.stdout)
+        except json.JSONDecodeError:
+            payload = None
     if result.returncode != 0:
+        # rc=1 且 stdout 是完整 scorecard = graph-test-suite 的「有低分维度」
+        # 判定（它已经算完并输出了结果），不是崩溃。不能让这份 payload 被丢
+        # 掉：丢弃会让基线落成 scores.total=null，周检于是永远显示「无基线」
+        # 假绿（issue #1）。
+        if result.returncode == 1 and isinstance(payload, dict):
+            return payload
         error_msg = result.stderr[:500] if result.stderr else "unknown error"
         raise RuntimeError(f"graph-test-suite.py failed: {error_msg}")
-    try:
-        return json.loads(result.stdout)
-    except json.JSONDecodeError as e:
-        raise RuntimeError(f"graph-test-suite.py returned invalid JSON: {e}") from e
+    if payload is None:
+        raise RuntimeError(
+            "graph-test-suite.py returned invalid JSON: "
+            f"{result.stdout[:200]}"
+        )
+    return payload
 
 
 def analyze(source: str = "ontology", ontology_path: str = None,
@@ -174,7 +209,8 @@ def analyze(source: str = "ontology", ontology_path: str = None,
 
     # Trend check
     try:
-        trend = trend_check(diagnostic)
+        trend = trend_check(diagnostic, ontology_path=ontology_path,
+                            wiki_root=wiki_root)
         if trend:
             diagnostic["trend"] = trend
     except Exception as e:
@@ -225,7 +261,8 @@ def diagnostics_to_specs(result: dict) -> list[dict]:
     return specs
 
 
-def baseline_save(result: dict) -> dict:
+def baseline_save(result: dict, ontology_path: str = None,
+                  wiki_root: str = None) -> dict:
     """Save a B3 scorecard baseline while retaining legacy score fields."""
     saved_at = datetime.now(timezone.utc).isoformat()
     scorecard = dict(result.get("scorecard") or build_scorecard(
@@ -249,10 +286,16 @@ def baseline_save(result: dict) -> dict:
         "scores": legacy_scores,
         "diagnosis_summary": {
             "total": len(result.get("diagnosis", [])),
-            "by_severity": _count_by_severity(result),
+            # 零计数 severity 也要落盘：否则读取方（weekly-health-check）会把
+            # 缺失的 P0/P1 当成「无基线」（issue #1 同一类假绿）。
+            "by_severity": _normalized_severity_counts(result),
         },
     }
-    baseline_path = _baseline_path_for_source(result.get("source", "ontology"))
+    baseline_path = _baseline_path_for_source(
+        result.get("source", "ontology"),
+        ontology_path=ontology_path,
+        wiki_root=wiki_root,
+    )
     atomic_write(baseline_path, json.dumps(baseline, ensure_ascii=False, indent=2))
     return baseline
 
@@ -287,13 +330,19 @@ def scorecard_delta(previous: dict | None, current: dict | None) -> dict:
     return deltas
 
 
-def trend_check(result: dict) -> dict | None:
+def trend_check(result: dict, ontology_path: str = None,
+                wiki_root: str = None) -> dict | None:
     """对比基线，检测知识健康度退化。
 
     返回: {previous_score, current_score, delta, alert, alert_threshold}
     评分下降 ≥ 10 分 → alert=True
     """
-    baseline_path = _baseline_path_for_source(result.get("source", "ontology"))
+    resolution = _baseline_resolution(
+        result.get("source", "ontology"),
+        ontology_path=ontology_path,
+        wiki_root=wiki_root,
+    )
+    baseline_path = resolution.path
     if not os.path.exists(baseline_path):
         return None
 
@@ -321,7 +370,10 @@ def trend_check(result: dict) -> dict | None:
         "alert": delta <= -10,
         "alert_threshold": -10,
         "baseline_saved_at": baseline.get("saved_at", ""),
+        "baseline_path": baseline_path,
     }
+    if resolution.migration_note:
+        trend["baseline_migration"] = resolution.migration_note
     metric_delta = scorecard_delta(baseline, result.get("scorecard"))
     if metric_delta:
         trend["scorecard_delta"] = metric_delta
@@ -557,6 +609,14 @@ def _count_by_severity(result: dict) -> dict:
     return counts
 
 
+def _normalized_severity_counts(result: dict) -> dict:
+    """基线落盘用：P0/P1/P2 始终存在（缺省=0）。"""
+    counts = _count_by_severity(result)
+    for severity in ("P0", "P1", "P2"):
+        counts.setdefault(severity, 0)
+    return counts
+
+
 # ══════════════════════════════════════════════════
 # CLI
 # ══════════════════════════════════════════════════
@@ -596,12 +656,29 @@ if __name__ == "__main__":
 
     elif args.action == "baseline-save":
         result = analyze_from_args()
-        baseline_save(result)
-        print(f"Baseline saved to {_baseline_path_for_source(result.get('source', args.source))}")
+        baseline_save(result, ontology_path=args.ontology_path,
+                      wiki_root=args.wiki_root)
+        baseline_path = _baseline_path_for_source(
+            result.get('source', args.source),
+            ontology_path=args.ontology_path,
+            wiki_root=args.wiki_root,
+        )
+        print(f"Baseline saved to {baseline_path}")
+        legacy = _baseline_resolution(
+            result.get('source', args.source),
+            ontology_path=args.ontology_path,
+            wiki_root=args.wiki_root,
+        ).legacy_path
+        if legacy and os.path.exists(legacy):
+            print(
+                f"迁移提示: 旧基线 {legacy} 仍存在（已不再读取）。"
+                f"请确认新基线可用后删除旧文件。"
+            )
 
     elif args.action == "trend-check":
         result = analyze_from_args()
-        trend = trend_check(result)
+        trend = trend_check(result, ontology_path=args.ontology_path,
+                            wiki_root=args.wiki_root)
         print(json.dumps(trend, ensure_ascii=False, indent=2))
 
     elif args.action == "specs":

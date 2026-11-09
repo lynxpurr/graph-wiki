@@ -8,7 +8,8 @@ Reuses (zero changes):
   - graph_loader.build_graph()      — graph construction
   - scorecard.build_scorecard()     — scorecard + canary eligibility
   - wiki_analyzer.scorecard_delta() — per-metric deltas
-  - wiki_analyzer._baseline_path_for_source() — baseline path resolution
+  - baseline_paths.resolve_baseline() — baseline path resolution (shared with
+    wiki_analyzer baseline-save and weekly-health-check, issue #1)
 
 Exit codes: 0=PASS, 1=WARN, 2=REVIEW, 3=BLOCK
 """
@@ -26,8 +27,9 @@ SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, SCRIPT_DIR)
 
 from graph_loader import build_graph, normalize_sources
+from baseline_paths import resolve_baseline
 from scorecard import build_scorecard
-from wiki_analyzer import scorecard_delta, _baseline_path_for_source
+from wiki_analyzer import scorecard_delta
 
 # ── Default paths ─────────────────────────────────────────────────────────
 WIKI_ROOT = os.environ.get(
@@ -331,6 +333,8 @@ def _max_severity(current: str, candidate: str) -> str:
 
 def render_json(
     gate: dict, delta: dict, baseline: dict, current: dict,
+    baseline_path: str | None = None,
+    migration_note: str | None = None,
 ) -> str:
     """Render structured JSON output."""
     output = {
@@ -368,6 +372,10 @@ def render_json(
             ),
         },
     }
+    if baseline_path:
+        output["baseline_path"] = baseline_path
+    if migration_note:
+        output["baseline_migration"] = migration_note
     if gate.get("message"):
         output["message"] = gate["message"]
     return json.dumps(output, ensure_ascii=False, indent=2)
@@ -375,6 +383,8 @@ def render_json(
 
 def render_report(
     gate: dict, delta: dict, baseline: dict, current: dict, source: str,
+    baseline_path: str | None = None,
+    migration_note: str | None = None,
 ) -> str:
     """Render a Markdown canary report."""
     emoji = _DECISION_EMOJI.get(gate["decision"], "❓")
@@ -469,6 +479,10 @@ def render_report(
         f"- **Edges**: {meta.get('edges', '?')}",
         f"- **Current source**: {source}",
     ])
+    if baseline_path:
+        lines.append(f"- **Baseline path**: {baseline_path}")
+    if migration_note:
+        lines.extend(["", "## Baseline Migration", "", migration_note])
 
     return "\n".join(lines) + "\n"
 
@@ -513,11 +527,31 @@ def main() -> int:
     source_str = ",".join(source_names)
 
     # ── Load baseline ─────────────────────────────────────────────────
-    baseline_path = args.baseline or _baseline_path_for_source(source_names)
+    resolution = None
+    if args.baseline:
+        baseline_path = args.baseline
+    else:
+        resolution = resolve_baseline(
+            source_names,
+            ontology_path=args.ontology_path,
+            wiki_root=args.wiki_root,
+            default_dir=os.path.dirname(ONTOLOGY_PATH),
+        )
+        baseline_path = resolution.path
+    migration_note = resolution.migration_note if resolution else None
+    if migration_note:
+        print(f"⚠️ {migration_note}", file=sys.stderr)
     if not os.path.exists(baseline_path):
+        hint = ""
+        if resolution is not None and resolution.legacy_path:
+            hint = (
+                "\nLegacy baseline also missing: "
+                f"{resolution.legacy_path}"
+            )
         print(
-            f"Error: Baseline not found at {baseline_path}\n"
-            f"Run wiki_analyzer baseline-save first.", file=sys.stderr,
+            f"Error: Baseline not found at {baseline_path}{hint}\n"
+            f"Run wiki_analyzer baseline-save --source {source_str} "
+            f"--wiki-root {args.wiki_root} first.", file=sys.stderr,
         )
         return 1
 
@@ -580,16 +614,19 @@ def main() -> int:
 
     # ── Output ────────────────────────────────────────────────────────
     if args.json:
-        output = render_json(gate, delta, baseline, current)
+        output = render_json(gate, delta, baseline, current,
+                             baseline_path, migration_note)
         print(output)
     else:
-        output = render_report(gate, delta, baseline, current, source_str)
+        output = render_report(gate, delta, baseline, current, source_str,
+                               baseline_path, migration_note)
         print(output)
 
     if args.report:
         try:
             with open(args.report, "w", encoding="utf-8") as f:
-                f.write(render_report(gate, delta, baseline, current, source_str))
+                f.write(render_report(gate, delta, baseline, current, source_str,
+                                      baseline_path, migration_note))
         except OSError as exc:
             print(f"Error writing report: {exc}", file=sys.stderr)
             return 1
