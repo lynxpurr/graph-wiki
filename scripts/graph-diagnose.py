@@ -387,6 +387,9 @@ def diagnose_reciprocity(G, meta, pr):
 
 def diagnose_linkrot(G, meta, wiki_root=None):
     broken = defaultdict(list)
+    broken_seen = {}        # (source_cid, target) -> entry, dedup per issue #4
+    code_block_exempt = 0   # wikilinks skipped inside code fences, issue #6
+    code_block_samples = []
 
     # Discover all markdown files and build canonical ID set
     wiki_root = os.path.expanduser(wiki_root or '.')
@@ -402,7 +405,21 @@ def diagnose_linkrot(G, meta, wiki_root=None):
     # for concepts/algorithms.md). Resolve both forms so subdirectory pages are
     # not falsely reported as broken links (P0-2 fix).
     basename_targets = {os.path.basename(p)[:-3] for p in md_files if p.endswith('.md')}
-    valid_targets = set(canonical_targets) | basename_targets
+    # Raw relative paths (uncollapsed): _canonical_id collapses dir/index.md -> dir,
+    # so a link written as [[dir/index]] matched no canonical id and was falsely
+    # reported as broken (issue #3). Accept both forms.
+    raw_targets = set()
+    for _p in md_files:
+        _rel = os.path.relpath(_p, wiki_root).replace('\\', '/')
+        if not _rel.endswith('.md'):
+            continue
+        raw_targets.add(_rel[:-3])
+        # A directory landing page written as README.md is addressed by the bare
+        # directory name in this wiki's convention ([[dir]] for dir/README.md),
+        # mirroring the dir/index.md collapse in _canonical_id (issue #3).
+        if _rel.endswith('/README.md'):
+            raw_targets.add(_rel[:-len('/README.md')])
+    valid_targets = set(canonical_targets) | basename_targets | raw_targets
 
     # Index link patterns — auto-generated directory/index pages whose
     # outbound wikilinks are informational, not content-level references.
@@ -422,6 +439,13 @@ def diagnose_linkrot(G, meta, wiki_root=None):
         source_is_index = _is_index_slug(source_cid)
         for target_raw, _label, inside_code in iter_wikilinks(content):
             if inside_code:
+                # Code-fenced links stay exempt from link-rot (a code sample is not
+                # a reference), but the exemption must be observable — dropping them
+                # silently hid real references (issue #6).
+                if not target_raw.startswith('skill:') and not target_raw.startswith('skills:'):
+                    code_block_exempt += 1
+                    if len(code_block_samples) < 20:
+                        code_block_samples.append({'source': source_cid, 'target': target_raw})
                 continue
             if target_raw.startswith('skill:') or target_raw.startswith('skills:'):
                 continue
@@ -437,10 +461,18 @@ def diagnose_linkrot(G, meta, wiki_root=None):
                 start = max(0, idx - 30) if idx >= 0 else 0
                 end = min(len(content), (idx if idx >= 0 else 0) + len(target_raw) + 34)
                 ctx = content[start:end].replace('\n', ' ').strip()
-                broken[source_cid].append({
-                    'target': target, 'context': ctx,
-                    'is_index_link': source_is_index,
-                })
+                seen_key = (source_cid, target)
+                existing = broken_seen.get(seen_key)
+                if existing is not None:
+                    existing['occurrences'] += 1
+                else:
+                    entry = {
+                        'target': target, 'context': ctx,
+                        'is_index_link': source_is_index,
+                        'occurrences': 1,
+                    }
+                    broken_seen[seen_key] = entry
+                    broken[source_cid].append(entry)
 
     details = []
     for source in sorted(broken, key=lambda s: -len(broken[s])):
@@ -455,6 +487,10 @@ def diagnose_linkrot(G, meta, wiki_root=None):
         'total_broken': sum(d['broken_count'] for d in details),
         'affected_sources': len(details),
         'details': details,
+        'unique_broken': len(broken_seen),
+        'duplicated_entries': sum(e['occurrences'] - 1 for e in broken_seen.values()),
+        'code_block_exempt': code_block_exempt,
+        'code_block_samples': code_block_samples,
     }
 
 
@@ -952,9 +988,17 @@ def json_output(G, de, iso, spo, sd, rec, lr, st, full=False, source="wiki",
             'components': components,
         },
         'scores': {
-            'total': None,  # filled by graph-test-suite
-            'max': 100,
+            # graph-diagnose does NOT compute a score. The authoritative score is
+            # produced by graph-test-suite (summary.score), and its maximum is
+            # active_dimensions * 10 + 10 (bonus cap) — 120 for an 11-dimension
+            # single-source wiki, not 100. A hardcoded 100 here produced a false
+            # "score exceeds max" reading (102 vs 100) — issue #5.
+            'total': None,
+            'max': None,
             'dimensions': {},
+            'source': 'graph-test-suite',
+            'max_formula': 'active_dimensions * 10 + 10',
+            'note': 'score/max are not produced by graph-diagnose; see graph-test-suite',
         },
         'diagnosis': _diagnosis_to_array(
             de, iso, spo, sd, rec, lr, st, full, multi_source,
@@ -1042,6 +1086,26 @@ def _diagnosis_to_array(de, iso, spo, sd, rec, lr, st, full,
                     'is_index_link': is_index,
                 },
             })
+
+    # D4b: wikilinks exempted inside code fences — informational disclosure only.
+    # The exemption itself is intentional (a code sample is not a reference); what
+    # was wrong was dropping them silently with no way to see how many (issue #6).
+    if lr.get('code_block_exempt'):
+        items.append({
+            'dimension': 'D4',
+            'title': f"代码块内链接未检查: {lr.get('code_block_exempt')} 处",
+            'severity': 'P2',
+            'task_type': 'docs',
+            'auto_queue': False,
+            'recommendation': (
+                '代码围栏内的 [[wikilink]] 按设计豁免（代码示例不等于引用）；'
+                '此处仅披露豁免量，如确属真实引用请移出代码块'
+            ),
+            'evidence': {
+                'count': lr.get('code_block_exempt'),
+                'samples': lr.get('code_block_samples', []),
+            },
+        })
     # D5: Seed Diffusion
     for s_item in sd:
         if s_item.get('warning'):
