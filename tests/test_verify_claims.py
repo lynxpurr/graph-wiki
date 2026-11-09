@@ -615,3 +615,35 @@ def test_blank_line_closes_the_quote(tmp_path):
     )
     out = _run(body, tmp_path)
     assert out.returncode == 0, out.stdout + out.stderr
+
+
+def test_invisible_only_line_is_not_a_blank_line(tmp_path):
+    """Round 7 W7-1: CommonMark blank = spaces/tabs only. NBSP/ZWSP lines keep the quote open."""
+    body = (
+        "> quoted prose\n"
+        "{pad}\n"
+        "\u200b<!-- claims:begin\n"
+        "json-eq: linkrot_summary.total_broken == 3\n"
+        "claims:end -->\n"
+    )
+    for name, pad in (("nbsp", "\u00a0"), ("zwsp", "\u200b"), ("shy", "\u00ad"), ("combining", "\u0301")):
+        out = _run(body.format(pad=pad), tmp_path)
+        assert out.returncode == 2, name + out.stdout + out.stderr
+        assert "block quote" in (out.stdout + out.stderr)
+
+
+def test_phantom_quote_prefix_cannot_hide_a_second_block(tmp_path):
+    """Round 7 W7-2: a ZWSP before ">" must not open a quote that swallows block two."""
+    body = (
+        "<!-- claims:begin\n"
+        "json-eq: linkrot_summary.total_broken == 3\n"
+        "claims:end -->\n"
+        "\n"
+        "\u200b> note\n"
+        "\u200b<!-- claims:begin\n"
+        "json: fabricated.path\n"
+        "claims:end -->\n"
+    )
+    out = _run(body, tmp_path)
+    assert out.returncode == 2, out.stdout + out.stderr
+    assert "claims blocks found" in (out.stdout + out.stderr)

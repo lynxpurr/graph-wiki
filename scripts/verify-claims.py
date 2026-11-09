@@ -122,6 +122,7 @@ def strip_quote_prefix(line: str) -> str:
 # a block that can interrupt a paragraph. An HTML block such as '<!--' can
 # interrupt, which is exactly why a bare marker escapes the quote while the
 # same marker padded with an invisible character does not (round 6 M1).
+QUOTE_OPEN_RE = re.compile(r"^ {0,3}>")   # raw form: block structure allows <=3 spaces
 HTML_BLOCK_START_RE = re.compile(r"^ {0,3}<!--")
 
 
@@ -138,12 +139,11 @@ def quote_mask(lines: list[str], fmask: list[bool]) -> list[bool]:
     for i, line in enumerate(lines):
         if fmask[i]:
             continue  # fence content is opaque: it neither opens nor closes a quote
-        visible = visible_key(line)
-        if not visible:
+        if not line.strip(" \t"):  # CommonMark blank line: spaces and tabs only
             open_quote = False
             in_paragraph = False
             continue
-        if QUOTE_PREFIX_RE.match(visible):
+        if QUOTE_OPEN_RE.match(line):
             open_quote = True
             in_paragraph = True
             mask[i] = True
