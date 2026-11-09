@@ -875,11 +875,18 @@ def text_report(G, de, iso, spo, sd, rec, lr, st, multi_source=None):
 
     # 6. 链接腐烂
     lines.append("━" * 60)
-    lines.append(f"6. 链接腐烂 (Link Rot) — 断链:{lr['total_broken']}处, 涉及{lr['affected_sources']}个源")
+    # Issue #16 follow-up: total_broken is raw references, while the per-source
+    # detail lines count deduped targets. Printing only the raw number next to a
+    # deduped breakdown read as two different accounts of one thing.
+    _lr_unique = lr.get('unique_broken', lr['total_broken'])
+    lines.append(
+        f"6. 链接腐烂 (Link Rot) — 断链引用:{lr['total_broken']}处"
+        f" / {_lr_unique}个目标, 涉及{lr['affected_sources']}个源"
+    )
     lines.append("━" * 60)
     for d in lr['details'][:10]:
         title = d.get('title', d['source'])
-        lines.append(f"  [{d['source']}] {d['broken_count']}个断链:")
+        lines.append(f"  [{d['source']}] {d['broken_count']}个目标:")
         for bt in d['broken_targets'][:3]:
             lines.append(f"    → [[{bt['target']}]]  ...{bt['context'][:60]}...")
     if len(lr['details']) > 10:
@@ -944,7 +951,10 @@ def text_report(G, de, iso, spo, sd, rec, lr, st, multi_source=None):
     lines.append(f"  海绵:        {len(spo):>4d}")
     lines.append(f"  扩散不足:    {sum(1 for x in sd if x['warning']):>4d}/{len(sd)}")
     lines.append(f"  互惠:        {rec['status']:>6s} ({rec['ratio']:.1%})")
-    lines.append(f"  链接腐烂:    {lr['total_broken']:>4d}处")
+    lines.append(
+        f"  链接腐烂:    {lr['total_broken']:>4d}处引用"
+        f" / {lr.get('unique_broken', lr['total_broken'])}个目标"
+    )
     lines.append(f"  概念陈旧:    {len(st):>4d}")
     if multi_source.get('status') == 'computed':
         lines.append(f"  跨源覆盖:    {multi_source['D8']['wiki_coverage']:>6.1%}")

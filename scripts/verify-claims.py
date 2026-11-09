@@ -9,17 +9,24 @@ claim was written from the function body, not from the artifact.
 Claim types (one per line inside the claims block):
 
     json: <dotted.path>       path must resolve; [] = list element
-    json-eq: <path> == <v>    path must resolve AND equal v (JSON literal or string)
+    json-eq: <path> == <v>    path must resolve AND equal v, same type (scalar paths)
     title: <substring>        some diagnosis title must contain it (>= 2 chars)
     absent: <dotted.path>     path must NOT resolve (guards against leftovers)
-    no-claims: <reason>       only when no code changed (see --changed-files)
+    no-claims: <reason>       only when every changed file is documentation
 
-Fail-closed rules (issue #14, #15):
+Fail-closed rules:
 
-  - zero claims blocks            -> exit 2
-  - more than one claims block    -> exit 2  (was: extras silently dropped)
-  - empty/short title substring   -> FAIL    (was: '' in t matched everything)
-  - no-claims with code changed   -> FAIL    (was: any 8+ char excuse passed)
+  - zero claims blocks                     -> exit 2
+  - more than one claims block             -> exit 2
+  - empty/short title substring            -> FAIL
+  - json-eq on a [] path                   -> FAIL (dual semantics, assert a scalar)
+  - json-eq across types (2 vs 2.0, 1 vs true) -> FAIL
+  - no-claims with ANY non-document change -> FAIL
+  - no-claims with an empty changed list   -> FAIL
+
+Marker discipline: a marker only counts when it occupies its own line. Text that
+merely mentions the marker inline is prose, not a block. Zero-width characters are
+stripped before counting, so a disguised marker cannot hide a block.
 
 Exit codes: 0 all claims hold, 1 a claim failed, 2 the block is missing/malformed.
 """
@@ -28,6 +35,8 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
+import re
 import subprocess
 import sys
 from pathlib import Path
@@ -35,30 +44,40 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).resolve().parents[1]
 DIAGNOSE = REPO_ROOT / "scripts" / "graph-diagnose.py"
 DEFAULT_FIXTURE = REPO_ROOT / "tests" / "fixtures" / "claims-wiki"
-BEGIN = "<!-- claims:begin"
-END = "claims:end -->"
-CODE_PREFIXES = ("scripts/", "tests/", ".github/", "examples/")
-CODE_SUFFIXES = (".py", ".yml", ".yaml", ".toml", ".txt", ".cfg", ".ini", ".sh")
+
+ZERO_WIDTH = dict.fromkeys(map(ord, "\u200b\u200c\u200d\u200e\u200f\ufeff"), None)
+BEGIN_RE = re.compile(r"^[ \t]*<!-- claims:begin[ \t]*$", re.MULTILINE)
+END_RE = re.compile(r"^[ \t]*claims:end -->[ \t]*$", re.MULTILINE)
+
+# Only pure documentation may skip the gate. Everything else — scripts, tests, CI
+# config, dependency pins, Makefiles, extensionless executables — counts as code.
+DOC_SUFFIXES = (".md",)
+NON_DOC_PREFIXES = ("scripts/", "tests/", ".github/", "examples/")
+
+
+def normalize_body(body: str) -> str:
+    """Strip zero-width characters so a disguised marker cannot hide a block."""
+    return body.translate(ZERO_WIDTH)
 
 
 def extract_claims(body: str) -> tuple[list[str], str | None]:
-    """Return (claims, error). More than one block is a hard error (issue #14)."""
-    blocks = body.count(BEGIN)
-    if blocks == 0:
+    """Return (claims, error). Markers must occupy their own line."""
+    body = normalize_body(body)
+    begins = BEGIN_RE.findall(body)
+    if not begins:
         return [], "no claims block found in PR body"
-    if blocks > 1:
+    if len(begins) > 1:
         return [], (
-            f"{blocks} claims blocks found; exactly one is allowed. "
+            f"{len(begins)} claims blocks found; exactly one is allowed. "
             "Extra blocks are never silently ignored — that was a bypass (#14)."
         )
-    start = body.find(BEGIN)
-    nl = body.find("\n", start)
-    if nl == -1:
-        return [], "claims block is not terminated on a new line"
-    end = body.find(END, nl)
-    if end == -1:
-        return [], "claims block has no 'claims:end -->' terminator"
-    claims = [ln.strip() for ln in body[nl:end].splitlines() if ln.strip()]
+    if not END_RE.search(body):
+        return [], "claims block has no 'claims:end -->' terminator line"
+    start = BEGIN_RE.search(body).end()
+    end = END_RE.search(body, start)
+    if end is None:
+        return [], "terminator appears before the block content"
+    claims = [ln.strip() for ln in body[start:end.start()].splitlines() if ln.strip()]
     if not claims:
         return [], "claims block is empty"
     return claims, None
@@ -103,16 +122,27 @@ def run_diagnose(wiki_root: Path) -> dict:
         raise SystemExit(f"diagnose produced invalid JSON: {exc}")
 
 
-def is_code_path(path: str) -> bool:
-    """Anything whose change can alter behaviour, not just .py files.
+def normalize_path(raw: str, repo_root: Path) -> str:
+    """Strip quotes, ./ prefixes, and make absolute paths repo-relative."""
+    p = raw.strip()
+    if len(p) >= 2 and p[0] == p[-1] and p[0] in "\"'":
+        p = p[1:-1]
+    if p.startswith("./"):
+        p = p[2:]
+    if os.path.isabs(p):
+        try:
+            p = os.path.relpath(p, repo_root)
+        except ValueError:
+            pass
+    return p.replace(os.sep, "/")
 
-    Issue found while attacking round 3: a PR touching .github/workflows or a
-    dependency file could still claim no-claims and skip every check.
-    """
-    return path.startswith(CODE_PREFIXES) or path.endswith(CODE_SUFFIXES)
+
+def is_doc_only(path: str) -> bool:
+    """True only for pure documentation. Everything else can change behaviour."""
+    return path.endswith(DOC_SUFFIXES) and not path.startswith(NON_DOC_PREFIXES)
 
 
-def check_claim(claim: str, data: dict, changed_files, is_template_copy: bool):
+def check_claim(claim: str, data: dict, changed_files, repo_root: Path):
     """Return (ok, kind, detail)."""
     if claim.startswith("json-eq:"):
         rest = claim[len("json-eq:"):].strip()
@@ -120,6 +150,12 @@ def check_claim(claim: str, data: dict, changed_files, is_template_copy: bool):
             return False, "json-eq", "expected 'path == value'"
         path, raw = rest.split("==", 1)
         path, raw = path.strip(), raw.strip()
+        if "[]" in path:
+            return False, "json-eq", (
+                "json-eq does not accept [] paths: json: takes any element while "
+                "json-eq took the first, which read as two different semantics. "
+                "Assert a concrete scalar path instead."
+            )
         ok, value = resolve(data, path)
         if not ok:
             return False, "json-eq", f"{path} not present in output"
@@ -127,12 +163,9 @@ def check_claim(claim: str, data: dict, changed_files, is_template_copy: bool):
             expected = json.loads(raw)
         except json.JSONDecodeError:
             expected = raw
-        # Strict type comparison: 2 and 2.0 and "2" are different claims. Loose
-        # equality let a float assert an int, which is the same class of ambiguity
-        # this gate exists to remove.
         if type(value) is not type(expected) or value != expected:
             return False, "json-eq", (
-                f"{path} = {value!r} ({type(value).__name__}), ",
+                f"{path} = {value!r} ({type(value).__name__}), "
                 f"expected {expected!r} ({type(expected).__name__})"
             )
         return True, "json-eq", f"{path} == {json.dumps(expected, ensure_ascii=False)}"
@@ -173,12 +206,15 @@ def check_claim(claim: str, data: dict, changed_files, is_template_copy: bool):
             return False, "no-claims", (
                 "changed-file list is empty; cannot tell whether code changed (fail-closed)"
             )
-        code = [f for f in changed_files if is_code_path(f)]
-        if code:
+        blockers = [
+            f for f in (normalize_path(x, repo_root) for x in changed_files)
+            if not is_doc_only(f)
+        ]
+        if blockers:
             return False, "no-claims", (
-                f"code changed ({', '.join(code[:3])}); a skip is not allowed (#15)"
+                f"non-document change ({', '.join(blockers[:3])}); a skip is not allowed (#15)"
             )
-        return True, "no-claims", f"skipped: {reason}"
+        return True, "no-claims", f"skipped: {reason} (docs only)"
     return False, "unknown", f"unrecognised claim: {claim!r}"
 
 
@@ -195,6 +231,8 @@ def main(argv=None) -> int:
     ap.add_argument("--wiki-root", default=str(DEFAULT_FIXTURE))
     ap.add_argument("--changed-files", default=None,
                     help="file listing changed paths; required for no-claims")
+    ap.add_argument("--repo-root", default=str(REPO_ROOT),
+                    help="used to make absolute changed paths repo-relative")
     args = ap.parse_args(argv)
 
     body = Path(args.body_file).read_text(encoding="utf-8")
@@ -206,10 +244,11 @@ def main(argv=None) -> int:
         return 2
 
     changed = read_changed_files(args.changed_files)
+    repo_root = Path(args.repo_root)
     data = run_diagnose(Path(args.wiki_root))
     failed = 0
     for claim in claims:
-        ok, kind, detail = check_claim(claim, data, changed, False)
+        ok, kind, detail = check_claim(claim, data, changed, repo_root)
         print(f"{'PASS' if ok else 'FAIL'}  [{kind}] {detail}")
         if not ok:
             failed += 1
