@@ -164,6 +164,25 @@ cd /path/to/your/wiki
 - `scipy`
 - `python-louvain` (community detection)
 - `markdown-it-py` (PR claims gate block structure, `scripts/verify-claims.py`)
+## 开发约定：推送前隐私门禁
+
+这是一个公开仓库。`.githooks/pre-push` 在每次 `push` 前机械扫描待推送内容，命中即阻断：
+
+```bash
+git config core.hooksPath .githooks   # 每个 clone 设一次
+```
+
+扫描的是**形状**而不是名单——绝对家目录路径、私网地址、凭证前缀（`sk-` / `ghp_` / `AKIA` 等）、
+个人邮箱域、聊天平台 ID 形状。真实姓名、主机名与内网地址一律不进仓库，写在本地的未跟踪文件里：
+
+```
+$(git rev-parse --git-dir)/privacy-patterns.local   # 每行一个扩展正则
+```
+
+它位于 `.git` 内，无法被提交。这一点是刻意的：把真实用户名写进扫描脚本，等于用扫描脚本泄露它要防的东西。
+
+需要绕过时用 `git push --no-verify`，并在 PR 里点名是哪一处误报。
+
 
 ## 适用场景
 

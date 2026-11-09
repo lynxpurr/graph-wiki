@@ -1,0 +1,57 @@
+#!/usr/bin/env bash
+# Pre-push privacy gate for a public repository.
+# Enable once per clone:   git config core.hooksPath .githooks
+# Deliberate bypass:       git push --no-verify  (name the false positive in the PR)
+#
+# This file is public, so it may only contain SHAPES, never values: a real user
+# name or hostname written here would leak exactly what it guards. Real names,
+# hostnames and internal addresses belong in the untracked file
+#   $(git rev-parse --git-dir)/privacy-patterns.local
+# one extended regex per line. It sits inside .git, so it cannot be committed.
+
+set -uo pipefail
+
+# Shapes only. Deliberately no 10.x check: version strings such as 10.5.2 are
+# common in a changelog and would make the gate cry wolf.
+GENERIC='/home/[a-z][a-z0-9_-]+/|/Users/[a-z][a-z0-9_-]+/'
+GENERIC="$GENERIC"'|192[.]168[.][0-9]{1,3}|172[.](1[6-9]|2[0-9]|3[01])[.][0-9]{1,3}'
+GENERIC="$GENERIC"'|sk-[A-Za-z0-9]{20,}|ghp_[A-Za-z0-9]{20,}|gho_[A-Za-z0-9]{20,}'
+GENERIC="$GENERIC"'|xoxb-[0-9]{10,}|AKIA[0-9A-Z]{16}|ou_[0-9a-f]{20}'
+GENERIC="$GENERIC"'|@(gmail|qq|outlook|163|126)[.]'
+
+git_dir=$(git rev-parse --git-dir)
+local_patterns="$git_dir/privacy-patterns.local"
+pat="$GENERIC"
+if [ -f "$local_patterns" ]; then
+  extra=$(grep -vE '^[[:space:]]*(#|$)' "$local_patterns" | paste -sd'|' -)
+  [ -n "$extra" ] && pat="$pat|$extra"
+fi
+
+rc=0
+echo "== privacy scan (public repo)"
+
+hits=$(git grep -I -n -E "$pat" HEAD -- . 2>/dev/null | head -20)
+if [ -n "$hits" ]; then
+  echo "  HIT  tracked files:"
+  while IFS= read -r line; do echo "    $line"; done <<< "$hits"
+  rc=1
+else
+  echo "  OK   tracked files: 0 hits"
+fi
+
+while read -r _local_ref local_sha _remote_ref _remote_sha; do
+  [ "${local_sha:-}" = "0000000000000000000000000000000000000000" ] && continue
+  bad=$(git log --format='%ae' "$local_sha" --not --remotes 2>/dev/null | grep -vE 'noreply[.]github[.]com$' | sort -u | head -5)
+  if [ -n "$bad" ]; then
+    echo "  WARN author emails that are not a GitHub noreply address:"
+    while IFS= read -r l; do echo "    $l"; done <<< "$bad"
+  fi
+done
+
+if [ "$rc" -ne 0 ]; then
+  echo ""
+  echo "  push blocked: personal data would enter a public repository."
+  echo "  Fix the content. Do not bypass with --no-verify unless the hit is a"
+  echo "  documented false positive, and name it in the PR."
+fi
+exit "$rc"

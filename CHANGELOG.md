@@ -1,5 +1,21 @@
 # Changelog
 
+## Unreleased — pre-push privacy gate
+
+### Added
+
+- **`.githooks/pre-push`** blocks a push that would put personal data into this public repository.
+  It scans tracked content for *shapes* — absolute home paths, private ranges, credential prefixes,
+  personal mail domains, chat-platform id forms — plus any extra pattern listed in the untracked
+  `$(git rev-parse --git-dir)/privacy-patterns.local`. Enable with `git config core.hooksPath .githooks`.
+- Real names and hostnames stay out of the script on purpose: a scanner that hardcodes the value it
+  guards leaks that value the moment the repository is public.
+
+### Notes
+
+- The 10.x private range is deliberately not matched: changelogs are full of version strings like
+  `10.5.2`, and a gate that cries wolf gets bypassed by habit.
+
 ## Unreleased — claims gate: block structure comes from a CommonMark parse
 
 ### Changed (gate internals)
