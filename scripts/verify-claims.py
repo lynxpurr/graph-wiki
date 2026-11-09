@@ -40,48 +40,92 @@ import re
 import subprocess
 import sys
 from pathlib import Path
+import unicodedata
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 DIAGNOSE = REPO_ROOT / "scripts" / "graph-diagnose.py"
 DEFAULT_FIXTURE = REPO_ROOT / "tests" / "fixtures" / "claims-wiki"
 
-ZERO_WIDTH = dict.fromkeys(map(ord, "\u200b\u200c\u200d\u200e\u200f\ufeff"), None)
-BEGIN_RE = re.compile(r"^[ \t]*<!-- claims:begin[ \t]*$", re.MULTILINE)
-END_RE = re.compile(r"^[ \t]*claims:end -->[ \t]*$", re.MULTILINE)
+# A marker is defined by what it renders as, not by which characters we happened
+# to blacklist. Delete everything that carries no visible meaning — control,
+# formatting, separator and combining characters — then compare what is left to
+# the one canonical string. Round 5: enumerating Cf missed Cc, Zs, Zl, Zp and Mn,
+# and the line anchor accepted only [ \t] — two definitions of "invisible", one
+# gap, and both bypasses and false positives lived in that gap.
+MARKER_BEGIN_KEY = "<!--claims:begin"
+MARKER_END_KEY = "claims:end-->"
+INVISIBLE_CATEGORIES = ("C", "Z", "M")
 
-# Only pure documentation may skip the gate. Everything else — scripts, tests, CI
-# config, dependency pins, Makefiles, extensionless executables — counts as code.
-DOC_SUFFIXES = (".md",)
-NON_DOC_PREFIXES = ("scripts/", "tests/", ".github/", "examples/")
+FENCE_OPEN_RE = re.compile(r"^[ \t]*(`{3,}|~{3,})(.*)$")
 
 
-def normalize_body(body: str) -> str:
-    """Strip zero-width characters so a disguised marker cannot hide a block."""
-    return body.translate(ZERO_WIDTH)
+def visible_key(line: str) -> str:
+    """The line as a reader sees it: invisible, spacing, combining chars removed."""
+    return "".join(
+        ch for ch in line
+        if unicodedata.category(ch)[0] not in INVISIBLE_CATEGORIES
+    )
+
+
+def fence_mask(lines: list[str]) -> list[bool]:
+    """Flag the lines a Markdown reader would treat as fenced code (CommonMark)."""
+    mask = [False] * len(lines)
+    i = 0
+    while i < len(lines):
+        m = FENCE_OPEN_RE.match(lines[i])
+        if not m:
+            i += 1
+            continue
+        run, info = m.group(1), m.group(2)
+        if run[0] == "`" and "`" in info:
+            i += 1  # a backtick fence may not carry backticks in its info string
+            continue
+        marker = run[0]
+        # Closing fence: same character, at least as long, and nothing else on it.
+        close_re = re.compile(
+            r"^[ \t]*" + re.escape(marker) + "{" + str(len(run)) + r",}[ \t]*$"
+        )
+        mask[i] = True
+        j = i + 1
+        while j < len(lines):
+            mask[j] = True
+            if close_re.match(lines[j]):
+                break
+            j += 1
+        i = j + 1
+    return mask
 
 
 def extract_claims(body: str) -> tuple[list[str], str | None]:
-    """Return (claims, error). Markers must occupy their own line."""
-    body = normalize_body(body)
-    begins = BEGIN_RE.findall(body)
-    if not begins:
+    """Return (claims, error). A marker is a whole line, outside any code fence."""
+    lines = body.splitlines()
+    mask = fence_mask(lines)
+    begins = [i for i, ln in enumerate(lines) if visible_key(ln) == MARKER_BEGIN_KEY]
+    unfenced = [i for i in begins if not mask[i]]
+    if not unfenced:
+        if begins:
+            return [], (
+                "the claims block sits inside a code fence, so it reads as a "
+                "quotation rather than a claim. Move it out of the fence."
+            )
         return [], "no claims block found in PR body"
-    if len(begins) > 1:
+    if len(unfenced) > 1:
         return [], (
-            f"{len(begins)} claims blocks found; exactly one is allowed. "
+            f"{len(unfenced)} claims blocks found; exactly one is allowed. "
             "Extra blocks are never silently ignored — that was a bypass (#14)."
         )
-    if not END_RE.search(body):
-        return [], "claims block has no 'claims:end -->' terminator line"
-    start = BEGIN_RE.search(body).end()
-    end = END_RE.search(body, start)
+    start = unfenced[0]
+    end = next(
+        (i for i in range(start + 1, len(lines))
+         if not mask[i] and visible_key(lines[i]) == MARKER_END_KEY),
+        None,
+    )
     if end is None:
-        return [], "terminator appears before the block content"
-    claims = [ln.strip() for ln in body[start:end.start()].splitlines() if ln.strip()]
+        return [], "claims block has no 'claims:end -->' terminator line"
+    claims = [ln.strip() for ln in lines[start + 1:end] if ln.strip()]
     if not claims:
         return [], "claims block is empty"
     return claims, None
-
 
 def resolve(obj, path: str):
     """Resolve a dotted path; a [] suffix means every element of a list."""
@@ -136,6 +180,11 @@ def normalize_path(raw: str, repo_root: Path) -> str:
             pass
     return p.replace(os.sep, "/")
 
+
+# Only pure documentation may skip the gate. Everything else — scripts, tests, CI
+# config, dependency pins, Makefiles, extensionless executables — counts as code.
+DOC_SUFFIXES = (".md",)
+NON_DOC_PREFIXES = ("scripts/", "tests/", ".github/", "examples/")
 
 def is_doc_only(path: str) -> bool:
     """True only for pure documentation. Everything else can change behaviour."""
@@ -218,12 +267,28 @@ def check_claim(claim: str, data: dict, changed_files, repo_root: Path):
     return False, "unknown", f"unrecognised claim: {claim!r}"
 
 
+STATUS_LINE_RE = re.compile(r"^([A-Z])(\d*)\t(.+)$")
+
+
 def read_changed_files(path) -> list[str] | None:
+    """Accept `git diff --name-only` or `--name-status`; a rename yields both sides.
+
+    `--name-only` reports only the new name of a rename, so `evil.py -> notes.md`
+    would look like a documentation change. `--name-status` shows the pair.
+    """
     if not path:
         return None
-    text = Path(path).read_text(encoding="utf-8")
-    return [ln.strip() for ln in text.splitlines() if ln.strip()]
-
+    out: list[str] = []
+    for line in Path(path).read_text(encoding="utf-8").splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        m = STATUS_LINE_RE.match(line)
+        if m:
+            out.extend(part for part in m.group(3).split("\t") if part)
+        else:
+            out.append(line)
+    return out
 
 def main(argv=None) -> int:
     ap = argparse.ArgumentParser(description="verify PR claims against CLI output")
@@ -253,6 +318,19 @@ def main(argv=None) -> int:
         if not ok:
             failed += 1
 
+    non_doc = [
+        f for f in (normalize_path(x, repo_root) for x in (changed or []))
+        if not is_doc_only(f)
+    ]
+    asserts_value = any(c.startswith(("json-eq:", "absent:")) for c in claims)
+    if failed == 0 and non_doc and not asserts_value:
+        print(
+            "FAIL  [policy] this changes code (" + ", ".join(non_doc[:3]) + ") "
+            "but asserts no value: `json:` only proves a path exists, so a hollow "
+            "block can still look green. Add at least one json-eq: or absent:.",
+            file=sys.stderr,
+        )
+        failed += 1
     print()
     print(f"{len(claims) - failed}/{len(claims)} claims hold")
     return 0 if failed == 0 else 1

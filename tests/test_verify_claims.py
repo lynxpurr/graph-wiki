@@ -378,3 +378,156 @@ def test_json_eq_rejects_bool_for_int(tmp_path):
     out = _run(body, tmp_path)
     assert out.returncode == 1, out.stdout + out.stderr
     assert "expected True (bool)" in out.stdout
+
+
+def test_invisible_hidden_block_beyond_the_original_set(tmp_path):
+    """Round 5 self-check: U+200B-F was a list, not a principle. Any Cf will do."""
+    body = (
+        "<!-- claims:begin\n"
+        "json-eq: linkrot_summary.unique_broken == 2\n"
+        "claims:end -->\n"
+        "\n"
+        "<!-- cl{c}aims:begin\n"
+        "json: nonexistent.path\n"
+        "claims:end -->\n"
+    )
+    for ch in ("\u2060", "\u00ad", "\u202e", "\u180e"):
+        out = _run(body.format(c=ch), tmp_path)
+        assert out.returncode == 2, repr(ch) + out.stdout + out.stderr
+        assert "claims blocks found" in (out.stdout + out.stderr)
+
+
+def test_fenced_example_is_not_a_second_block(tmp_path):
+    """Round 5 self-check: quoting the template inside a fence is help, not smuggling."""
+    body = (
+        "<!-- claims:begin\n"
+        "json-eq: linkrot_summary.total_broken == 3\n"
+        "claims:end -->\n"
+        "\n"
+        "This is what the block looks like:\n"
+        "\n"
+        "```\n"
+        "<!-- claims:begin\n"
+        "json: <path>\n"
+        "claims:end -->\n"
+        "```\n"
+    )
+    out = _run(body, tmp_path)
+    assert out.returncode == 0, out.stdout + out.stderr
+
+
+def test_fenced_tilde_block_is_ignored_too(tmp_path):
+    """Same rule for ~~~ fences; the marker set must not depend on one syntax."""
+    body = (
+        "<!-- claims:begin\n"
+        "json-eq: linkrot_summary.total_broken == 3\n"
+        "claims:end -->\n"
+        "\n"
+        "~~~\n"
+        "<!-- claims:begin\n"
+        "json: <path>\n"
+        "claims:end -->\n"
+        "~~~\n"
+    )
+    out = _run(body, tmp_path)
+    assert out.returncode == 0, out.stdout + out.stderr
+
+
+def test_hidden_marker_beyond_cf_category(tmp_path):
+    """Round 5 W2: stripping Cf alone was still an enumeration. Cc/Zs/Zl/Mn escaped."""
+    body = (
+        "<!-- claims:begin\n"
+        "json-eq: linkrot_summary.unique_broken == 2\n"
+        "claims:end -->\n"
+        "\n"
+        "{variant}\n"
+        "json: fabricated.path\n"
+        "claims:end -->\n"
+    )
+    variants = {
+        "zl": "<!-- claims:begin\u2028",
+        "nul": "<!-- claims:begin\x00",
+        "vs16": "<!-- claims:begin\ufe0f",
+        "combining": "<!-- clai\u0301ms:begin",
+        "nbsp": "<!-- claims:begin\u00a0",
+    }
+    for name, marker in variants.items():
+        out = _run(body.format(variant=marker), tmp_path)
+        assert out.returncode == 2, name + out.stdout + out.stderr
+        assert "claims blocks found" in (out.stdout + out.stderr)
+
+
+def test_trailing_nbsp_on_marker_line_still_counts(tmp_path):
+    """Round 5 X3: rich-text paste adds NBSP; the honest block must stay visible."""
+    body = (
+        "<!-- claims:begin\n"
+        "json-eq: linkrot_summary.total_broken == 3\n"
+        "claims:end -->\u00a0\n"
+    )
+    out = _run(body, tmp_path)
+    assert out.returncode == 0, out.stdout + out.stderr
+
+
+def test_four_backtick_fence_quotation_is_not_a_block(tmp_path):
+    """Round 5 X1: a four-backtick run closes a three-backtick quotation."""
+    body = (
+        "<!-- claims:begin\n"
+        "json-eq: linkrot_summary.total_broken == 3\n"
+        "claims:end -->\n"
+        "\n"
+        "````\n"
+        "<!-- claims:begin\n"
+        "json: <path>\n"
+        "claims:end -->\n"
+        "````\n"
+    )
+    out = _run(body, tmp_path)
+    assert out.returncode == 0, out.stdout + out.stderr
+
+
+def test_block_inside_a_fence_is_named_as_such(tmp_path):
+    """Round 5 F4b/X2: a swallowed block must say why, not just say not found."""
+    body = (
+        "``` do not write it like this\n"
+        "<!-- claims:begin\n"
+        "json-eq: linkrot_summary.total_broken == 3\n"
+        "claims:end -->\n"
+        "```\n"
+    )
+    out = _run(body, tmp_path)
+    assert out.returncode == 2, out.stdout + out.stderr
+    assert "inside a code fence" in (out.stdout + out.stderr)
+
+
+def test_code_change_requires_a_value_assertion(tmp_path):
+    """Round 5 W1: a hollow block of existence-only claims looked green."""
+    body = (
+        "<!-- claims:begin\n"
+        "json: linkrot_summary.total_broken\n"
+        "claims:end -->\n"
+    )
+    out = _run(body, tmp_path, changed=["scripts/graph-diagnose.py"])
+    assert out.returncode == 1, out.stdout + out.stderr
+    assert "asserts no value" in (out.stdout + out.stderr)
+
+
+def test_doc_change_allows_existence_only(tmp_path):
+    """The same body on a documentation-only change stays legal."""
+    body = (
+        "<!-- claims:begin\n"
+        "json: linkrot_summary.total_broken\n"
+        "claims:end -->\n"
+    )
+    out = _run(body, tmp_path, changed=["README.md"])
+    assert out.returncode == 0, out.stdout + out.stderr
+
+
+def test_name_status_rename_reports_both_paths(tmp_path):
+    """Round 5 P7: --name-only hides the old name; a rename must not read as docs."""
+    body = (
+        "<!-- claims:begin\n"
+        "no-claims: 只是重命名了文件\n"
+        "claims:end -->\n"
+    )
+    out = _run(body, tmp_path, changed=["R100\tevil.py\tnotes.md"])
+    assert out.returncode == 1, out.stdout + out.stderr
