@@ -200,3 +200,181 @@ def test_no_claims_allowed_for_docs_only(tmp_path):
     out = _run(body, tmp_path, changed=["README.md"])
     assert out.returncode == 0, out.stdout + out.stderr
     assert "no-claims" in out.stdout
+
+def test_no_claims_rejected_when_workflow_changed(tmp_path):
+    """Round-3 hole: a CI workflow edit is behaviour, not prose."""
+    body = (
+        "<!-- claims:begin\n"
+        "no-claims: 只调整了 CI 工作流的注释排版\n"
+        "claims:end -->\n"
+    )
+    out = _run(body, tmp_path, changed=[".github/workflows/claims.yml"])
+    assert out.returncode == 1, out.stdout + out.stderr
+    assert "a skip is not allowed" in out.stdout
+
+
+def test_no_claims_rejected_when_dependency_changed(tmp_path):
+    """Round-3 hole: dependency pins change behaviour too."""
+    body = (
+        "<!-- claims:begin\n"
+        "no-claims: 只是升级了依赖版本号而已\n"
+        "claims:end -->\n"
+    )
+    out = _run(body, tmp_path, changed=["requirements.txt"])
+    assert out.returncode == 1, out.stdout + out.stderr
+    assert "a skip is not allowed" in out.stdout
+
+
+def test_no_claims_rejected_on_empty_changed_list(tmp_path):
+    """Round-3 hole: an empty diff list made every skip look safe."""
+    body = (
+        "<!-- claims:begin\n"
+        "no-claims: 这次什么都没改，放心\n"
+        "claims:end -->\n"
+    )
+    out = _run(body, tmp_path, changed=[])
+    assert out.returncode == 1, out.stdout + out.stderr
+    assert "changed-file list is empty" in out.stdout
+
+
+def test_json_eq_rejects_float_for_int(tmp_path):
+    """Round-3 hole: 2 == 2.0 in Python, so a float could assert an int."""
+    body = (
+        "<!-- claims:begin\n"
+        "json-eq: linkrot_summary.unique_broken == 2.0\n"
+        "claims:end -->\n"
+    )
+    out = _run(body, tmp_path)
+    assert out.returncode == 1, out.stdout + out.stderr
+    assert "expected 2.0" in out.stdout
+
+
+def test_json_eq_rejects_string_for_int(tmp_path):
+    """A quoted number is a different claim than a number."""
+    body = (
+        "<!-- claims:begin\n"
+        "json-eq: linkrot_summary.unique_broken == \"2\"\n"
+        "claims:end -->\n"
+    )
+    out = _run(body, tmp_path)
+    assert out.returncode == 1, out.stdout + out.stderr
+
+
+def test_json_eq_accepts_matching_int(tmp_path):
+    """Control case: the fix must not break honest integer claims."""
+    body = (
+        "<!-- claims:begin\n"
+        "json-eq: linkrot_summary.unique_broken == 2\n"
+        "claims:end -->\n"
+    )
+    out = _run(body, tmp_path)
+    assert out.returncode == 0, out.stdout + out.stderr
+
+def test_zero_width_disguised_second_block_is_detected(tmp_path):
+    """Round 4 S1: zero-width chars hid a second block from the block count."""
+    body = (
+        "<!-- claims:begin\n"
+        "json: linkrot_summary.unique_broken\n"
+        "claims:end -->\n\n"
+        "<!-- cl\u200baims:begin\n"
+        "json: fabricated.path\n"
+        "claims:end -->\n"
+    )
+    out = _run(body, tmp_path)
+    assert out.returncode == 2, out.stdout + out.stderr
+    assert "claims blocks found" in out.stderr
+
+
+def test_inline_marker_mention_is_prose_not_block(tmp_path):
+    """Round 4 S6: prose mentioning the marker used to count as an extra block."""
+    body = (
+        "Add a '<!-- claims:begin ... claims:end -->' block to your PR.\n\n"
+        "<!-- claims:begin\n"
+        "json: linkrot_summary.unique_broken\n"
+        "claims:end -->\n"
+    )
+    out = _run(body, tmp_path)
+    assert out.returncode == 0, out.stdout + out.stderr
+
+
+def test_terminator_inside_a_value_does_not_truncate(tmp_path):
+    """Round 4 S5: an inline terminator used to cut the block mid-value."""
+    body = (
+        "<!-- claims:begin\n"
+        "json-eq: linkrot_summary.dedupe_key == claims:end -->\n"
+        "claims:end -->\n"
+    )
+    out = _run(body, tmp_path)
+    # The whole value is compared, not a truncated fragment: the claim simply fails.
+    assert out.returncode == 1, out.stdout + out.stderr
+    assert "dedupe_key" in out.stdout
+
+
+def test_no_claims_rejected_for_extensionless_file(tmp_path):
+    """Round 4 E2: a Makefile changes behaviour but has no extension."""
+    body = (
+        "<!-- claims:begin\n"
+        "no-claims: 只是小改动没有行为变化\n"
+        "claims:end -->\n"
+    )
+    out = _run(body, tmp_path, changed=["Makefile"])
+    assert out.returncode == 1, out.stdout + out.stderr
+    assert "non-document change" in out.stdout
+
+
+def test_no_claims_rejected_for_lock_file(tmp_path):
+    """Round 4 E3: dependency locks pin behaviour."""
+    body = (
+        "<!-- claims:begin\n"
+        "no-claims: 只是刷新了锁文件而已\n"
+        "claims:end -->\n"
+    )
+    out = _run(body, tmp_path, changed=["requirements.lock"])
+    assert out.returncode == 1, out.stdout + out.stderr
+
+
+def test_no_claims_rejected_for_quoted_path(tmp_path):
+    """Round 4 E7: git can emit quoted paths; the quote must not defeat the check."""
+    body = (
+        "<!-- claims:begin\n"
+        "no-claims: 只改了脚本注释\n"
+        "claims:end -->\n"
+    )
+    out = _run(body, tmp_path, changed=['"scripts/x.py"'])
+    assert out.returncode == 1, out.stdout + out.stderr
+
+
+def test_no_claims_rejected_for_dot_slash_and_absolute(tmp_path):
+    """Round 4 E4/E5: path prefixes must not change the classification."""
+    body = (
+        "<!-- claims:begin\n"
+        "no-claims: 只是调整脚本内部顺序\n"
+        "claims:end -->\n"
+    )
+    for variant in ("./scripts/foo.py", "/abs/path/to/repo/scripts/foo.py"):
+        out = _run(body, tmp_path, changed=[variant])
+        assert out.returncode == 1, variant + out.stdout + out.stderr
+
+
+def test_json_eq_rejects_array_path(tmp_path):
+    """Round 4 J8: json: takes any element while json-eq took the first."""
+    body = (
+        "<!-- claims:begin\n"
+        "json-eq: diagnosis[].severity == P0\n"
+        "claims:end -->\n"
+    )
+    out = _run(body, tmp_path)
+    assert out.returncode == 1, out.stdout + out.stderr
+    assert "does not accept [] paths" in out.stdout
+
+
+def test_json_eq_rejects_bool_for_int(tmp_path):
+    """Round 4 J1: True == 1 in Python; the gate must not conflate them."""
+    body = (
+        "<!-- claims:begin\n"
+        "json-eq: linkrot_summary.unique_broken == true\n"
+        "claims:end -->\n"
+    )
+    out = _run(body, tmp_path)
+    assert out.returncode == 1, out.stdout + out.stderr
+    assert "expected True (bool)" in out.stdout
