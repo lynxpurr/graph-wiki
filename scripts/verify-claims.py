@@ -40,12 +40,20 @@ import re
 import subprocess
 import sys
 from pathlib import Path
+import unicodedata
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 DIAGNOSE = REPO_ROOT / "scripts" / "graph-diagnose.py"
 DEFAULT_FIXTURE = REPO_ROOT / "tests" / "fixtures" / "claims-wiki"
 
-ZERO_WIDTH = dict.fromkeys(map(ord, "\u200b\u200c\u200d\u200e\u200f\ufeff"), None)
+INVISIBLE_CHARS = set("\u200b\u200c\u200d\u200e\u200f\u2060\u00ad\u180e\u3164\ufeff")
+
+# ``` and ~~~ fences hold quotations, not claims. A PR that shows the template
+# inside a fence is being helpful, not smuggling a second block.
+FENCE_RE = re.compile(
+    r"^[ \t]*```.*?^[ \t]*```[ \t]*$|^[ \t]*~~~.*?^[ \t]*~~~[ \t]*$",
+    re.MULTILINE | re.DOTALL,
+)
 BEGIN_RE = re.compile(r"^[ \t]*<!-- claims:begin[ \t]*$", re.MULTILINE)
 END_RE = re.compile(r"^[ \t]*claims:end -->[ \t]*$", re.MULTILINE)
 
@@ -56,9 +64,18 @@ NON_DOC_PREFIXES = ("scripts/", "tests/", ".github/", "examples/")
 
 
 def normalize_body(body: str) -> str:
-    """Strip zero-width characters so a disguised marker cannot hide a block."""
-    return body.translate(ZERO_WIDTH)
-
+    """Erase what cannot be seen: invisible characters and fenced quotations."""
+    kept = []
+    for ch in body:
+        if ch in INVISIBLE_CHARS:
+            continue
+        if unicodedata.category(ch) == "Cf":
+            continue
+        if 0xE0000 <= ord(ch) <= 0xE007F:
+            continue
+        kept.append(ch)
+    body = "".join(kept)
+    return FENCE_RE.sub(lambda m: chr(10) * m.group(0).count(chr(10)), body)
 
 def extract_claims(body: str) -> tuple[list[str], str | None]:
     """Return (claims, error). Markers must occupy their own line."""
