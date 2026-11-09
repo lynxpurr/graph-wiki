@@ -17,6 +17,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0   # need base branch history to diff changed files
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
@@ -28,8 +30,18 @@ jobs:
         env:
           PR_BODY: ${{ github.event.pull_request.body }}
         run: printf '%s' "$PR_BODY" > "$RUNNER_TEMP/pr-body.md"
+      - name: compute changed files
+        env:
+          BASE_REF: ${{ github.base_ref }}
+        run: |
+          git fetch --no-tags --quiet origin "$BASE_REF"
+          git diff --name-only "origin/$BASE_REF...HEAD" > "$RUNNER_TEMP/changed.txt"
+          echo "changed files: $(wc -l < "$RUNNER_TEMP/changed.txt")"
       - name: verify claims
-        run: python scripts/verify-claims.py --body-file "$RUNNER_TEMP/pr-body.md"
+        run: |
+          python scripts/verify-claims.py \
+            --body-file "$RUNNER_TEMP/pr-body.md" \
+            --changed-files "$RUNNER_TEMP/changed.txt"
 
       - name: self-test the verifier
         run: python -m pytest tests/test_verify_claims.py -q

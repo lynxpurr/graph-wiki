@@ -508,7 +508,11 @@ def diagnose_linkrot(G, meta, wiki_root=None):
         })
 
     return {
-        'total_broken': sum(d['broken_count'] for d in details),
+        # issue #16: total_broken is the RAW reference count so the three fields
+        # form a checkable identity: total == unique + duplicated. It previously
+        # summed the same deduped set as unique_broken, which made the two fields
+        # always equal and one of them meaningless.
+        'total_broken': sum(e['occurrences'] for e in broken_seen.values()),
         'affected_sources': len(details),
         'details': details,
         # issue #8: these aggregates were computed but never reached any CLI exit.
@@ -1050,6 +1054,8 @@ def json_output(G, de, iso, spo, sd, rec, lr, st, full=False, source="wiki",
             'skill_scheme_exempt': lr.get('skill_scheme_exempt', 0),
             'dedupe_key': '(source, target)',
             'duplicated_entries_meaning': 'references merged away = sum(occurrences - 1)',
+            'total_broken_meaning': 'raw wikilink references, not deduped work items',
+            'identity': 'total_broken == unique_broken + duplicated_entries',
         },
         'multi_source': multi_source or {
             'status': 'skipped', 'note': 'D8-D10 require multiple sources',
