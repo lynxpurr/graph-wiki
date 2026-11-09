@@ -35,7 +35,7 @@ jobs:
           BASE_REF: ${{ github.base_ref }}
         run: |
           git fetch --no-tags --quiet origin "$BASE_REF"
-          git diff --name-only "origin/$BASE_REF...HEAD" > "$RUNNER_TEMP/changed.txt"
+          git diff --name-status "origin/$BASE_REF...HEAD" > "$RUNNER_TEMP/changed.txt"
           echo "changed files: $(wc -l < "$RUNNER_TEMP/changed.txt")"
       - name: verify claims
         run: |
