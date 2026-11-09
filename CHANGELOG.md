@@ -1,5 +1,34 @@
 # Changelog
 
+## Unreleased — claims gate: block structure comes from a CommonMark parse
+
+### Changed (gate internals)
+
+- **The claims gate no longer guesses block structure from lines.** `fence_mask`, `quote_mask`,
+  `strip_quote_prefix` and their regexes are gone. `markdown-it-py` parses the PR body and the
+  gate reads, for every marker line, the innermost block that owns it plus its ancestor chain.
+  A claims block is accepted only as a document-level claim (`html_block` or `paragraph` owned
+  by the document root); anything else is rejected and the container is named.
+- **Marker identity stays line-based** (`visible_key`), so invisible padding still cannot turn a
+  marker into prose or prose into a marker. Identity and structure no longer share a definition —
+  that shared definition is where four rounds of bypasses lived.
+- **New runtime dependency**: `markdown-it-py>=3.0`. Without it the gate exits 5 instead of falling
+  back to line masks: a gate that silently checks less than it claims is worse than no gate.
+
+### Fixed
+
+- **Tab-indented quote inside a list item** (round 9, T4f): after `- a`, a tab puts `> note`
+  inside the list item block quote, because the tab width depends on the container the line sits
+  in — yet every absolute-indent regex read it as top level and let a hidden second block pass.
+- **Indented code blocks (4+ spaces or a tab)** hiding a claims block are rejected and named
+  (`indented code block`) instead of counting as a real block. This closes the known gap from
+  round 7 (A2), which the mask era left open on purpose.
+
+### Tests
+
+- 48 -> 52 cases: indented code, tab-indented marker, tab-indented quote inside a list item,
+  marker nested in a list item.
+
 ## Unreleased — `weekly-health-check` exit codes + severity baseline semantics
 
 ### Changed (behavior change)

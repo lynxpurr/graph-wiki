@@ -647,3 +647,62 @@ def test_phantom_quote_prefix_cannot_hide_a_second_block(tmp_path):
     out = _run(body, tmp_path)
     assert out.returncode == 2, out.stdout + out.stderr
     assert "claims blocks found" in (out.stdout + out.stderr)
+
+
+
+def test_indented_code_block_is_not_a_claim(tmp_path):
+    """Round 9 A2: 4 spaces makes it code to the reader, so it is not a claim.
+
+    This gap was known before the parser switch and is closed by the same rule:
+    the block is owned by an indented code block, not by the document.
+    """
+    body = (
+        "    <!-- claims:begin\n"
+        "    json-eq: linkrot_summary.total_broken == 3\n"
+        "    claims:end -->\n"
+    )
+    out = _run(body, tmp_path)
+    assert out.returncode == 2, out.stdout + out.stderr
+    assert "indented code block" in (out.stdout + out.stderr)
+
+
+def test_tab_indented_marker_is_not_a_claim(tmp_path):
+    """Round 9 C2: a tab is four columns, so the marker reads as indented code."""
+    body = "\t<!-- claims:begin\n\tjson-eq: linkrot_summary.total_broken == 3\n\tclaims:end -->\n"
+    out = _run(body, tmp_path)
+    assert out.returncode == 2, out.stdout + out.stderr
+    assert "indented code block" in (out.stdout + out.stderr)
+
+
+def test_tab_indented_quote_inside_a_list_is_still_a_quote(tmp_path):
+    """Round 9 T4f: the tab width depends on the container the line sits in.
+
+    After "- a" the content column is 2, so a tab puts "> note" inside the list
+    item, where it is a block quote. No absolute-indent regex can see this; the
+    parser can. This was the bypass that ended the mask era.
+    """
+    body = (
+        "- a\n"
+        "\t> note\n"
+        "\t\u200b<!-- claims:begin\n"
+        "\tjson-eq: linkrot_summary.total_broken == 3\n"
+        "\tclaims:end -->\n"
+    )
+    out = _run(body, tmp_path)
+    assert out.returncode == 2, out.stdout + out.stderr
+    assert "block quote" in (out.stdout + out.stderr)
+
+
+def test_marker_nested_in_a_list_item_is_named_as_nested(tmp_path):
+    """A claim belongs at the document level; a list item is named when it is not."""
+    body = (
+        "- a\n"
+        "\n"
+        "    <!-- claims:begin\n"
+        "    json-eq: linkrot_summary.total_broken == 3\n"
+        "    claims:end -->\n"
+    )
+    out = _run(body, tmp_path)
+    assert out.returncode == 2, out.stdout + out.stderr
+    text = out.stdout + out.stderr
+    assert "nested inside" in text or "block quote" in text

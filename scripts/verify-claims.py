@@ -59,15 +59,38 @@ MARKER_BEGIN_KEY = "<!--claims:begin"
 MARKER_END_KEY = "claims:end-->"
 INVISIBLE_CATEGORIES = ("C", "Z", "M")
 
-FENCE_OPEN_RE = re.compile(r"^[ \t]*(`{3,}|~{3,})(.*)$")
+# ---------------------------------------------------------------------------
+# Block structure: the reader's own parse is the only authority.
+#
+# Rounds 5-9 each added a hand-written mask -- fences, block quotes, lazy
+# continuations, a rewritten blank-line definition -- and each round the next
+# attack lived in the seam between that mask and CommonMark. Round 9 closed
+# the argument: a tab-indented '>' inside a list item is a block quote to
+# every reader, and no absolute-indent regex can see it, because the width of
+# that tab depends on the container the line sits in. Container nesting is not
+# recoverable from a line scan.
+#
+# So structure now comes from a real CommonMark parser, while marker identity
+# stays line-based (visible_key). The two rules no longer share a definition,
+# which is the gap they disagreed across for four rounds.
+# ---------------------------------------------------------------------------
 
-# A block-quote prefix on the visible form is a leading run of '>' characters:
-# visible_key already strips every spacing character, so '> ', '>> ' and '> > '
-# all reduce to this one shape (X4 — same one-canonical-string principle as the
-# marker keys below).
-QUOTE_PREFIX_RE = re.compile(r"^>+")
+try:
+    from markdown_it import MarkdownIt
+except ImportError:  # fail closed: never fall back to the masks this replaced
+    sys.stderr.write(
+        "FAIL  the CommonMark parser (markdown-it-py) is unavailable, so block "
+        "structure cannot be checked. Install scripts/requirements.txt. This "
+        "gate will not fall back to line masks: a gate that silently checks "
+        "less than it claims is worse than no gate.")
+    sys.stderr.write(chr(10))
+    raise SystemExit(5)
 
-
+# Where a reader sees a document-level claim. Inside a quote it reads as
+# someone else's words; inside a fence or indented code it does not read at all.
+# Marker identity stays line-based: invisible padding must never change whether
+# a line is a marker. This is the ONLY remaining lens, and it decides identity
+# alone -- never structure, which is what the deleted masks used it for.
 def visible_key(line: str) -> str:
     """The line as a reader sees it: invisible, spacing, combining chars removed."""
     return "".join(
@@ -75,130 +98,122 @@ def visible_key(line: str) -> str:
         if unicodedata.category(ch)[0] not in INVISIBLE_CATEGORIES
     )
 
+TOP_LEVEL_OWNERS = ("html_block", "paragraph")
 
-def fence_mask(lines: list[str]) -> list[bool]:
-    """Flag the lines a Markdown reader would treat as fenced code (CommonMark)."""
-    mask = [False] * len(lines)
-    i = 0
-    while i < len(lines):
-        m = FENCE_OPEN_RE.match(lines[i])
-        if not m:
-            i += 1
-            continue
-        run, info = m.group(1), m.group(2)
-        if run[0] == "`" and "`" in info:
-            i += 1  # a backtick fence may not carry backticks in its info string
-            continue
-        marker = run[0]
-        # Closing fence: same character, at least as long, and nothing else on it.
-        close_re = re.compile(
-            r"^[ \t]*" + re.escape(marker) + "{" + str(len(run)) + r",}[ \t]*$"
-        )
-        mask[i] = True
-        j = i + 1
-        while j < len(lines):
-            mask[j] = True
-            if close_re.match(lines[j]):
-                break
-            j += 1
-        i = j + 1
-    return mask
+# Leaf blocks the parser tracks line by line.
+LEAF_BLOCKS = ("html_block", "fence", "code_block")
+
+_PARSER = MarkdownIt("commonmark")
 
 
-def strip_quote_prefix(line: str) -> str:
-    """The line as it reads once a leading block-quote prefix is removed.
+def block_structure(body: str) -> list[tuple[str, tuple[str, ...]]]:
+    """Per source line: the block that owns it, and the ancestor chain.
 
-    Runs on the visible form (same lens that defines a marker), so a quoted
-    marker is recognised however it was padded. Lines that do not start with
-    '>' come back unchanged and can never match a marker key this way.
+    Inner tokens come after outer ones and overwrite them, so the answer is
+    always the innermost block -- the one a marker actually sits in.
     """
-    visible = visible_key(line)
-    m = QUOTE_PREFIX_RE.match(visible)
+    lines = body.splitlines()
+    where: list[tuple[str, tuple[str, ...]]] = [("", ())] * len(lines)
+    stack: list[str] = []
+    for tok in _PARSER.parse(body):
+        if tok.nesting == -1:
+            if stack:
+                stack.pop()
+            continue
+        if tok.nesting == 1:
+            owner = tok.type[:-5] if tok.type.endswith("_open") else tok.type
+            ancestors = tuple(stack)
+            stack.append(owner)
+        elif tok.type in LEAF_BLOCKS:
+            owner, ancestors = tok.type, tuple(stack)
+        else:
+            continue
+        if tok.map:
+            start, end = tok.map
+            for i in range(max(0, start), min(len(lines), end)):
+                where[i] = (owner, ancestors)
+    return where
+
+
+def displace_reason(where, line_no: int):
+    """Why a marker on this line is not a document-level claim (None if it is)."""
+    owner, ancestors = where[line_no]
+    if not ancestors and owner in TOP_LEVEL_OWNERS:
+        return None
+    if owner == "fence":
+        return (
+            "the claims block sits inside a code fence, so it reads as a " +
+            "quotation rather than a claim. Move it out of the fence."
+        )
+    if owner == "code_block":
+        return (
+            "the claims block sits inside an indented code block (4+ spaces or " +
+            "a tab), so it reads as code rather than a claim. Remove the " +
+            "indentation."
+        )
+    if "blockquote" in ancestors:
+        return (
+            "the claims block sits inside a block quote (its lines carry the " +
+            "quote marker), so it reads as a quotation rather than a claim. " +
+            "Move it out of the block quote."
+        )
+    chain = " > ".join(list(ancestors) + [owner or "document"])
+    return (
+        "the claims block is nested inside " + chain + ", so the reader sees " +
+        "no document-level claim. Move it to the top level."
+    )
+
+# A marker inside a quote carries an arrow run, so it only matches the canonical
+# key once that run is removed. Diagnostic only -- see note in extract_claims.
+ARROW_PREFIX_RE = re.compile("^>+")
+
+
+def strip_arrow_prefix(visible: str) -> str:
+    m = ARROW_PREFIX_RE.match(visible)
     return visible[m.end():] if m else visible
 
 
-# CommonMark lets a block quote continue on lines that carry no '>': an open
-# paragraph keeps absorbing them (a "lazy continuation") until a blank line or
-# a block that can interrupt a paragraph. An HTML block such as '<!--' can
-# interrupt, which is exactly why a bare marker escapes the quote while the
-# same marker padded with an invisible character does not (round 6 M1).
-QUOTE_OPEN_RE = re.compile(r"^ {0,3}>")   # raw form: block structure allows <=3 spaces
-HTML_BLOCK_START_RE = re.compile(r"^ {0,3}<!--")
-
-
-def quote_mask(lines: list[str], fmask: list[bool]) -> list[bool]:
-    """Flag the lines a reader sees inside an open block quote.
-
-    Explicit '>' lines open a quote. Following non-blank lines keep it open as
-    lazy continuations unless they open an HTML block, which can interrupt a
-    paragraph and therefore lands outside the quote.
-    """
-    mask = [False] * len(lines)
-    open_quote = False
-    in_paragraph = False
-    for i, line in enumerate(lines):
-        if fmask[i]:
-            continue  # fence content is opaque: it neither opens nor closes a quote
-        if not line.strip(" \t"):  # CommonMark blank line: spaces and tabs only
-            open_quote = False
-            in_paragraph = False
-            continue
-        if QUOTE_OPEN_RE.match(line):
-            open_quote = True
-            in_paragraph = True
-            mask[i] = True
-            continue
-        if open_quote and in_paragraph and not HTML_BLOCK_START_RE.match(line):
-            mask[i] = True  # lazy continuation: still inside the quote
-            continue
-        open_quote = False
-        in_paragraph = False
-    return mask
-
-
 def extract_claims(body: str) -> tuple[list[str], str | None]:
-    """Return (claims, error). A marker is a whole line, outside any code fence
-    or block quote — including one the line only joins as a lazy continuation."""
+    """Return (claims, error).
+
+    A marker is a whole line wherever it sits, but it only counts as a claim
+    where the reader puts it at the document level. Both statements come from
+    one parse, so there is no second definition left to drift.
+    """
     lines = body.splitlines()
-    fmask = fence_mask(lines)
-    qmask = quote_mask(lines, fmask)
+    where = block_structure(body)
     begins = [i for i, ln in enumerate(lines) if visible_key(ln) == MARKER_BEGIN_KEY]
-    usable = [i for i in begins if not fmask[i] and not qmask[i]]
+    usable = [i for i in begins if displace_reason(where, i) is None]
     if not usable:
-        if any(fmask[i] for i in begins):
-            return [], (
-                "the claims block sits inside a code fence, so it reads as a "
-                "quotation rather than a claim. Move it out of the fence."
-            )
-        # No line matches the begin key exactly here, so anything matching after
-        # the '>' strip was quoted outright; anything else that matched exactly
-        # was swallowed by an open quote as a lazy continuation.
+        if begins:
+            return [], displace_reason(where, begins[0])
+        # Identity is exact-line, so a marker the reader sees inside a quote only
+        # matches the canonical key once the arrow run is removed. That lens is
+        # diagnostic: the reason still comes from the parse, which knows the line
+        # is inside a block quote. It is not a second structural rule.
         quoted = [i for i, ln in enumerate(lines)
-                  if not fmask[i] and strip_quote_prefix(ln) == MARKER_BEGIN_KEY]
-        if any(qmask[i] for i in quoted):
-            return [], (
-                "the claims block sits inside a block quote (lines start with "
-                "'>'), so it reads as a quotation rather than a claim. Move it "
-                "out of the block quote: remove the leading '>' characters."
-            )
+                  if strip_arrow_prefix(visible_key(ln)) == MARKER_BEGIN_KEY]
+        if quoted and displace_reason(where, quoted[0]):
+            return [], displace_reason(where, quoted[0])
         return [], "no claims block found in PR body"
     if len(usable) > 1:
         return [], (
-            f"{len(usable)} claims blocks found; exactly one is allowed. "
-            "Extra blocks are never silently ignored — that was a bypass (#14)."
+            str(len(usable)) + " claims blocks found; exactly one is allowed. " +
+            "Extra blocks are never silently ignored -- that was a bypass (#14)."
         )
     start = usable[0]
     end = next(
         (i for i in range(start + 1, len(lines))
-         if not fmask[i] and not qmask[i] and visible_key(lines[i]) == MARKER_END_KEY),
+         if visible_key(lines[i]) == MARKER_END_KEY and displace_reason(where, i) is None),
         None,
     )
     if end is None:
-        return [], "claims block has no 'claims:end -->' terminator line"
+        return [], "claims block has no terminator line (claims:end -->)"
     claims = [ln.strip() for ln in lines[start + 1:end] if ln.strip()]
     if not claims:
         return [], "claims block is empty"
     return claims, None
+
 
 def resolve(obj, path: str):
     """Resolve a dotted path; a [] suffix means every element of a list."""
