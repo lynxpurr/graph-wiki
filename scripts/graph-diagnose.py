@@ -390,6 +390,9 @@ def diagnose_linkrot(G, meta, wiki_root=None):
     broken_seen = {}        # (source_cid, target) -> entry, dedup per issue #4
     code_block_exempt = 0   # wikilinks skipped inside code fences, issue #6
     code_block_samples = []
+    skill_scheme_exempt = 0  # skill:/skills: prefixed wikilinks, issue #10
+    skill_scheme_samples = []
+    source_paths = {}       # canonical id -> unfolded relative path, issue #9
 
     # Discover all markdown files and build canonical ID set
     wiki_root = os.path.expanduser(wiki_root or '.')
@@ -433,21 +436,40 @@ def diagnose_linkrot(G, meta, wiki_root=None):
             or any(p.startswith('index') for p in parts)
         )
 
+    def _is_skill_scheme(target):
+        """skill:/skills: prefixed wikilinks are scheme references, not pages."""
+        return target.startswith('skill:') or target.startswith('skills:')
+
     for path in md_files:
         source_cid = _canonical_id(path, wiki_root)
         content = open(path, encoding='utf-8').read()
-        source_is_index = _is_index_slug(source_cid)
+        # Issue #9: index-ness must be decided from the UNFOLDED path. _canonical_id()
+        # collapses dir/index.md to dir, so feeding it back to _is_index_slug() tested
+        # 'incidents' (starts with 'incid', not 'index') and silently failed, making
+        # the exemption surface inconsistent between a root index.md and dir/index.md.
+        source_rel = os.path.relpath(path, wiki_root).replace(os.sep, '/')
+        source_paths[source_cid] = source_rel
+        source_is_index = _is_index_slug(source_rel)
         for target_raw, _label, inside_code in iter_wikilinks(content):
             if inside_code:
                 # Code-fenced links stay exempt from link-rot (a code sample is not
                 # a reference), but the exemption must be observable — dropping them
                 # silently hid real references (issue #6).
-                if not target_raw.startswith('skill:') and not target_raw.startswith('skills:'):
+                if _is_skill_scheme(target_raw):
+                    # issue #10: scheme-prefixed links are exempt everywhere, but the
+                    # exemption still has to be observable, exactly like the fence one.
+                    skill_scheme_exempt += 1
+                    if len(skill_scheme_samples) < 20:
+                        skill_scheme_samples.append({'source': source_cid, 'target': target_raw})
+                else:
                     code_block_exempt += 1
                     if len(code_block_samples) < 20:
                         code_block_samples.append({'source': source_cid, 'target': target_raw})
                 continue
-            if target_raw.startswith('skill:') or target_raw.startswith('skills:'):
+            if _is_skill_scheme(target_raw):
+                skill_scheme_exempt += 1
+                if len(skill_scheme_samples) < 20:
+                    skill_scheme_samples.append({'source': source_cid, 'target': target_raw})
                 continue
             target = target_raw
             if target.startswith('../'):
@@ -478,6 +500,8 @@ def diagnose_linkrot(G, meta, wiki_root=None):
     for source in sorted(broken, key=lambda s: -len(broken[s])):
         details.append({
             'source': source,
+            # issue #9: keep the unfolded location so a folded slug stays traceable.
+            'source_path': source_paths.get(source, source),
             'title': meta[source].get('title', source) if source in meta else source,
             'broken_count': len(broken[source]),
             'broken_targets': broken[source],
@@ -487,10 +511,20 @@ def diagnose_linkrot(G, meta, wiki_root=None):
         'total_broken': sum(d['broken_count'] for d in details),
         'affected_sources': len(details),
         'details': details,
+        # issue #8: these aggregates were computed but never reached any CLI exit.
+        # Semantics, locked by test_dedupe_aggregates_*:
+        #   dedupe key              = (source, target), so the same missing page
+        #                             linked from two sources stays two work items
+        #   unique_broken           = deduped work items
+        #   duplicated_entries      = references merged away = sum(occurrences - 1)
+        #   entries_with_duplicates = deduped items that had occurrences > 1
         'unique_broken': len(broken_seen),
         'duplicated_entries': sum(e['occurrences'] - 1 for e in broken_seen.values()),
+        'entries_with_duplicates': sum(1 for e in broken_seen.values() if e['occurrences'] > 1),
         'code_block_exempt': code_block_exempt,
         'code_block_samples': code_block_samples,
+        'skill_scheme_exempt': skill_scheme_exempt,
+        'skill_scheme_samples': skill_scheme_samples,
     }
 
 
@@ -1003,6 +1037,20 @@ def json_output(G, de, iso, spo, sd, rec, lr, st, full=False, source="wiki",
         'diagnosis': _diagnosis_to_array(
             de, iso, spo, sd, rec, lr, st, full, multi_source,
         ),
+        # issue #8: link-rot aggregates were computed by diagnose_linkrot() and then
+        # discarded — no CLI exit ever carried them. Delivered here, with the dedupe
+        # semantics spelled out so the numbers cannot be read two ways.
+        'linkrot_summary': {
+            'total_broken': lr.get('total_broken', 0),
+            'unique_broken': lr.get('unique_broken', 0),
+            'duplicated_entries': lr.get('duplicated_entries', 0),
+            'entries_with_duplicates': lr.get('entries_with_duplicates', 0),
+            'affected_sources': lr.get('affected_sources', 0),
+            'code_block_exempt': lr.get('code_block_exempt', 0),
+            'skill_scheme_exempt': lr.get('skill_scheme_exempt', 0),
+            'dedupe_key': '(source, target)',
+            'duplicated_entries_meaning': 'references merged away = sum(occurrences - 1)',
+        },
         'multi_source': multi_source or {
             'status': 'skipped', 'note': 'D8-D10 require multiple sources',
         },
@@ -1084,6 +1132,11 @@ def _diagnosis_to_array(de, iso, spo, sd, rec, lr, st, full,
                     'source': source_slug, 'target': bt.get('target', ''),
                     'context': bt.get('context', ''),
                     'is_index_link': is_index,
+                    # issue #8: occurrences was computed then dropped here, so a target
+                    # referenced N times looked identical to one referenced once.
+                    'occurrences': bt.get('occurrences', 1),
+                    # issue #9: pre-fold location, so a folded slug stays traceable.
+                    'source_path': l.get('source_path') or source_slug,
                 },
             })
 
@@ -1093,7 +1146,7 @@ def _diagnosis_to_array(de, iso, spo, sd, rec, lr, st, full,
     if lr.get('code_block_exempt'):
         items.append({
             'dimension': 'D4',
-            'title': f"代码块内链接未检查: {lr.get('code_block_exempt')} 处",
+            'title': f"代码围栏/行内代码内链接未检查: {lr.get('code_block_exempt')} 处",
             'severity': 'P2',
             'task_type': 'docs',
             'auto_queue': False,
@@ -1104,6 +1157,26 @@ def _diagnosis_to_array(de, iso, spo, sd, rec, lr, st, full,
             'evidence': {
                 'count': lr.get('code_block_exempt'),
                 'samples': lr.get('code_block_samples', []),
+            },
+        })
+
+    # D4c: skill:/skills: prefixed wikilinks — exempt from link-rot (a scheme reference
+    # is not a page), but the exemption must be observable, same standard as D4b
+    # (issue #10: these were dropped with no counting at all).
+    if lr.get('skill_scheme_exempt'):
+        items.append({
+            'dimension': 'D4',
+            'title': f"skill:/skills: 前缀链接未检查: {lr.get('skill_scheme_exempt')} 处",
+            'severity': 'P2',
+            'task_type': 'docs',
+            'auto_queue': False,
+            'recommendation': (
+                'skill:/skills: 前缀的 [[wikilink]] 按设计不是页面链接，已豁免；'
+                '此处仅披露豁免量，如确属页面引用请改写为页面名'
+            ),
+            'evidence': {
+                'count': lr.get('skill_scheme_exempt'),
+                'samples': lr.get('skill_scheme_samples', []),
             },
         })
     # D5: Seed Diffusion

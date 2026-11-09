@@ -112,7 +112,7 @@ def test_code_block_exemption_surfaces_as_p2(load_script_module):
         "code_block_samples": [{"source": "a", "target": "kb-migration-playbook"}],
     }
     items = diag._diagnosis_to_array({}, {}, {}, {}, {}, lr, {}, False)
-    p2 = [i for i in items if i["severity"] == "P2" and "代码块内链接" in i["title"]]
+    p2 = [i for i in items if i["severity"] == "P2" and "代码围栏/行内代码内链接未检查" in i["title"]]
     assert len(p2) == 1, items
     assert p2[0]["evidence"]["count"] == 2
     assert not [i for i in items if i["severity"] == "P0"]
@@ -134,3 +134,111 @@ def test_diagnose_does_not_fabricate_max_score(tmp_path):
     assert scores["max"] is None, scores
     assert scores["total"] is None, scores
     assert scores["source"] == "graph-test-suite", scores
+
+def test_linkrot_summary_reaches_cli_output(load_script_module, tmp_path):
+    """Issue #8: the aggregates must exist in --json, not just in the return value."""
+    root = tmp_path / "wiki"
+    _write(root, "a.md", "# a\n\n[[gone]]\n[[gone]]\n[[gone]]\n")
+    out = subprocess.run(
+        [sys.executable, str(DIAGNOSE), "--source", "wiki",
+         "--wiki-root", str(root), "--json"],
+        capture_output=True, text=True, timeout=180,
+    )
+    assert out.returncode in (0, 1), out.stderr
+    data = json.loads(out.stdout)
+    summary = data.get("linkrot_summary")
+    assert summary is not None, sorted(data)
+    assert summary["unique_broken"] == 1, summary
+    assert summary["duplicated_entries"] == 2, summary
+    assert summary["entries_with_duplicates"] == 1, summary
+    assert summary["dedupe_key"] == "(source, target)", summary
+    assert "sum(occurrences - 1)" in summary["duplicated_entries_meaning"], summary
+
+
+def test_occurrences_reach_evidence(load_script_module):
+    """Issue #8: occurrences was computed then stripped when building evidence."""
+    diag = load_script_module("graph-diagnose.py")
+    lr = {
+        "total_broken": 1,
+        "affected_sources": 1,
+        "details": [{
+            "source": "a",
+            "source_path": "a.md",
+            "title": "a",
+            "broken_count": 1,
+            "broken_targets": [{
+                "target": "gone", "context": "ctx",
+                "is_index_link": False, "occurrences": 4,
+            }],
+        }],
+        "unique_broken": 1,
+        "duplicated_entries": 3,
+        "entries_with_duplicates": 1,
+        "code_block_exempt": 0,
+        "code_block_samples": [],
+        "skill_scheme_exempt": 0,
+        "skill_scheme_samples": [],
+    }
+    items = diag._diagnosis_to_array({}, {}, {}, {}, {}, lr, {}, False)
+    p0 = [i for i in items if i["severity"] == "P0"]
+    assert len(p0) == 1, items
+    assert p0[0]["evidence"]["occurrences"] == 4, p0[0]["evidence"]
+    assert p0[0]["evidence"]["source_path"] == "a.md", p0[0]["evidence"]
+
+
+def test_same_target_across_sources_stays_two_items(load_script_module, tmp_path):
+    """Issue #8 semantics: dedupe key is (source, target), so cross-source stays 2."""
+    root = tmp_path / "wiki"
+    _write(root, "a.md", "[[gone]]\n[[gone]]\n")
+    _write(root, "b.md", "[[gone]]\n")
+    diag = load_script_module("graph-diagnose.py")
+    result = diag.diagnose_linkrot(None, {}, wiki_root=str(root))
+    assert result["unique_broken"] == 2, result
+    assert result["total_broken"] == 2, result
+    # one repeat inside a.md, none inside b.md
+    assert result["duplicated_entries"] == 1, result
+    assert result["entries_with_duplicates"] == 1, result
+
+
+def test_index_source_exemption_is_consistent(load_script_module, tmp_path):
+    """Issue #9: dir/index.md must be exempt exactly like root index.md."""
+    root = tmp_path / "wiki"
+    _write(root, "index.md", "[[missing-a]]\n")
+    _write(root, "incidents/index.md", "[[missing-b]]\n")
+    diag = load_script_module("graph-diagnose.py")
+    result = diag.diagnose_linkrot(None, {}, wiki_root=str(root))
+    flags = {e["target"]: e["is_index_link"]
+             for d in result["details"] for e in d["broken_targets"]}
+    assert flags["missing-a"] is True, flags
+    assert flags["missing-b"] is True, flags
+    paths = {e["target"]: d["source_path"]
+             for d in result["details"] for e in d["broken_targets"]}
+    assert paths["missing-a"] == "index.md", paths
+    assert paths["missing-b"] == "incidents/index.md", paths
+
+
+def test_skill_scheme_exemption_is_visible(load_script_module, tmp_path):
+    """Issue #10: skill: links were dropped with no counting at all."""
+    root = tmp_path / "wiki"
+    _write(root, "a.md", "# a\n\n[[skill:ragflux-connector-pipeline]]\n")
+    diag = load_script_module("graph-diagnose.py")
+    result = diag.diagnose_linkrot(None, {}, wiki_root=str(root))
+    assert result["total_broken"] == 0, result
+    assert result["skill_scheme_exempt"] == 1, result
+    assert result["skill_scheme_samples"][0]["target"].startswith("skill:")
+    items = diag._diagnosis_to_array({}, {}, {}, {}, {}, result, {}, False)
+    p2 = [i for i in items if "skill:/skills: 前缀链接未检查" in i["title"]]
+    assert len(p2) == 1, items
+    assert p2[0]["severity"] == "P2", p2
+    assert not [i for i in items if i["severity"] == "P0"], items
+
+
+def test_skill_scheme_inside_code_block_counted_once(load_script_module, tmp_path):
+    """Issue #10: a skill: link inside a fence is a scheme exemption, not a fence one."""
+    root = tmp_path / "wiki"
+    _write(root, "a.md", "# a\n\n```md\n[[skill:foo]]\n[[plain-gone]]\n```\n")
+    diag = load_script_module("graph-diagnose.py")
+    result = diag.diagnose_linkrot(None, {}, wiki_root=str(root))
+    assert result["skill_scheme_exempt"] == 1, result
+    assert result["code_block_exempt"] == 1, result
+    assert result["total_broken"] == 0, result
