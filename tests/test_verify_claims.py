@@ -706,3 +706,21 @@ def test_marker_nested_in_a_list_item_is_named_as_nested(tmp_path):
     assert out.returncode == 2, out.stdout + out.stderr
     text = out.stdout + out.stderr
     assert "nested inside" in text or "block quote" in text
+
+
+def test_changed_file_path_with_line_separator_stays_one_path(tmp_path):
+    """One line definition for the whole script.
+
+    str.splitlines() also breaks on U+2028, so a path containing one used to be
+    read as two entries: "docs/a" (not a doc) plus "b.md". That turned a
+    documentation-only change into a code change and demanded a value
+    assertion for a file nobody edited.
+    """
+    path = "docs/a" + chr(0x2028) + "b.md"
+    body = (
+        "<!-- claims:begin\n"
+        "no-claims: docs 下只有措辞调整，没有脚本行为变化\n"
+        "claims:end -->\n"
+    )
+    out = _run(body, tmp_path, changed=[path])
+    assert out.returncode == 0, out.stdout + out.stderr

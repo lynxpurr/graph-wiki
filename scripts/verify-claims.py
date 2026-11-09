@@ -389,7 +389,8 @@ def read_changed_files(path) -> list[str] | None:
     if not path:
         return None
     out: list[str] = []
-    for line in Path(path).read_text(encoding="utf-8").splitlines():
+    text = normalize_newlines(Path(path).read_text(encoding="utf-8"))
+    for line in text.split(chr(10)):
         line = line.strip()
         if not line:
             continue
