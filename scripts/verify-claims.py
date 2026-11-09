@@ -117,40 +117,80 @@ def strip_quote_prefix(line: str) -> str:
     return visible[m.end():] if m else visible
 
 
+# CommonMark lets a block quote continue on lines that carry no '>': an open
+# paragraph keeps absorbing them (a "lazy continuation") until a blank line or
+# a block that can interrupt a paragraph. An HTML block such as '<!--' can
+# interrupt, which is exactly why a bare marker escapes the quote while the
+# same marker padded with an invisible character does not (round 6 M1).
+HTML_BLOCK_START_RE = re.compile(r"^ {0,3}<!--")
+
+
+def quote_mask(lines: list[str], fmask: list[bool]) -> list[bool]:
+    """Flag the lines a reader sees inside an open block quote.
+
+    Explicit '>' lines open a quote. Following non-blank lines keep it open as
+    lazy continuations unless they open an HTML block, which can interrupt a
+    paragraph and therefore lands outside the quote.
+    """
+    mask = [False] * len(lines)
+    open_quote = False
+    in_paragraph = False
+    for i, line in enumerate(lines):
+        if fmask[i]:
+            continue  # fence content is opaque: it neither opens nor closes a quote
+        visible = visible_key(line)
+        if not visible:
+            open_quote = False
+            in_paragraph = False
+            continue
+        if QUOTE_PREFIX_RE.match(visible):
+            open_quote = True
+            in_paragraph = True
+            mask[i] = True
+            continue
+        if open_quote and in_paragraph and not HTML_BLOCK_START_RE.match(line):
+            mask[i] = True  # lazy continuation: still inside the quote
+            continue
+        open_quote = False
+        in_paragraph = False
+    return mask
+
+
 def extract_claims(body: str) -> tuple[list[str], str | None]:
     """Return (claims, error). A marker is a whole line, outside any code fence
-    or block quote."""
+    or block quote — including one the line only joins as a lazy continuation."""
     lines = body.splitlines()
-    mask = fence_mask(lines)
+    fmask = fence_mask(lines)
+    qmask = quote_mask(lines, fmask)
     begins = [i for i, ln in enumerate(lines) if visible_key(ln) == MARKER_BEGIN_KEY]
-    unfenced = [i for i in begins if not mask[i]]
-    if not unfenced:
-        if begins:
+    usable = [i for i in begins if not fmask[i] and not qmask[i]]
+    if not usable:
+        if any(fmask[i] for i in begins):
             return [], (
                 "the claims block sits inside a code fence, so it reads as a "
                 "quotation rather than a claim. Move it out of the fence."
             )
-        # Here no line matches the begin key exactly, so anything matching after
-        # the prefix strip was genuinely quoted. A '>' at line start inside a
-        # fence is fence content, not a quote — fence-masked lines stay out.
+        # No line matches the begin key exactly here, so anything matching after
+        # the '>' strip was quoted outright; anything else that matched exactly
+        # was swallowed by an open quote as a lazy continuation.
         quoted = [i for i, ln in enumerate(lines)
-                  if not mask[i] and strip_quote_prefix(ln) == MARKER_BEGIN_KEY]
-        if quoted:
+                  if not fmask[i] and strip_quote_prefix(ln) == MARKER_BEGIN_KEY]
+        if any(qmask[i] for i in quoted):
             return [], (
                 "the claims block sits inside a block quote (lines start with "
                 "'>'), so it reads as a quotation rather than a claim. Move it "
                 "out of the block quote: remove the leading '>' characters."
             )
         return [], "no claims block found in PR body"
-    if len(unfenced) > 1:
+    if len(usable) > 1:
         return [], (
-            f"{len(unfenced)} claims blocks found; exactly one is allowed. "
+            f"{len(usable)} claims blocks found; exactly one is allowed. "
             "Extra blocks are never silently ignored — that was a bypass (#14)."
         )
-    start = unfenced[0]
+    start = usable[0]
     end = next(
         (i for i in range(start + 1, len(lines))
-         if not mask[i] and visible_key(lines[i]) == MARKER_END_KEY),
+         if not fmask[i] and not qmask[i] and visible_key(lines[i]) == MARKER_END_KEY),
         None,
     )
     if end is None:

@@ -564,3 +564,54 @@ def test_name_status_rename_reports_both_paths(tmp_path):
     )
     out = _run(body, tmp_path, changed=["R100\tevil.py\tnotes.md"])
     assert out.returncode == 1, out.stdout + out.stderr
+
+
+def test_lazy_continuation_marker_inside_quote_is_quoted(tmp_path):
+    """Round 6 M1: a line after "> prose" stays in the quote when padded with an invisible char."""
+    body = (
+        "> quoted prose\n"
+        "\u200b<!-- claims:begin\n"
+        "json-eq: linkrot_summary.total_broken == 3\n"
+        "claims:end -->\n"
+    )
+    out = _run(body, tmp_path)
+    assert out.returncode == 2, out.stdout + out.stderr
+    assert "block quote" in (out.stdout + out.stderr)
+
+
+def test_lazy_continuation_with_combining_mark_is_quoted(tmp_path):
+    """Same rule for a combining mark: it cannot open an HTML block either."""
+    body = (
+        "> quoted prose\n"
+        "\u0301<!-- claims:begin\n"
+        "json-eq: linkrot_summary.total_broken == 3\n"
+        "claims:end -->\n"
+    )
+    out = _run(body, tmp_path)
+    assert out.returncode == 2, out.stdout + out.stderr
+    assert "block quote" in (out.stdout + out.stderr)
+
+
+def test_bare_marker_after_quote_line_escapes_the_quote(tmp_path):
+    """L1 control: an HTML block can interrupt a paragraph, so this one is real."""
+    body = (
+        "> quoted prose\n"
+        "<!-- claims:begin\n"
+        "json-eq: linkrot_summary.total_broken == 3\n"
+        "claims:end -->\n"
+    )
+    out = _run(body, tmp_path)
+    assert out.returncode == 0, out.stdout + out.stderr
+
+
+def test_blank_line_closes_the_quote(tmp_path):
+    """A blank line ends the block quote, so the block after it is a real claim."""
+    body = (
+        "> quoted prose\n"
+        "\n"
+        "<!-- claims:begin\n"
+        "json-eq: linkrot_summary.total_broken == 3\n"
+        "claims:end -->\n"
+    )
+    out = _run(body, tmp_path)
+    assert out.returncode == 0, out.stdout + out.stderr
