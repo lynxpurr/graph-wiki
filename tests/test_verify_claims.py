@@ -499,6 +499,39 @@ def test_block_inside_a_fence_is_named_as_such(tmp_path):
     assert "inside a code fence" in (out.stdout + out.stderr)
 
 
+def test_blockquoted_example_is_not_a_second_block(tmp_path):
+    """X4: a block quote is a quotation container, like a fence — every level.
+
+    A quoted example of the block must not count as a second claims block."""
+    body = (
+        "<!-- claims:begin\n"
+        "json-eq: linkrot_summary.total_broken == 3\n"
+        "claims:end -->\n"
+        "\n"
+        "Quoting the template inside a block quote is help, not smuggling:\n"
+        "\n"
+        "{q}<!-- claims:begin\n"
+        "{q}json: <path>\n"
+        "{q}claims:end -->\n"
+    )
+    for q in ("> ", ">> ", "> > "):
+        out = _run(body.format(q=q), tmp_path)
+        assert out.returncode == 0, q + out.stdout + out.stderr
+
+
+def test_block_inside_a_block_quote_is_named_as_such(tmp_path):
+    """X4: a block swallowed by a block quote must say why, not just say not found."""
+    for q in ("> ", ">> ", "> > "):
+        body = (
+            "{q}<!-- claims:begin\n"
+            "{q}json-eq: linkrot_summary.total_broken == 3\n"
+            "{q}claims:end -->\n"
+        ).format(q=q)
+        out = _run(body, tmp_path)
+        assert out.returncode == 2, q + out.stdout + out.stderr
+        assert "block quote" in (out.stdout + out.stderr)
+
+
 def test_code_change_requires_a_value_assertion(tmp_path):
     """Round 5 W1: a hollow block of existence-only claims looked green."""
     body = (
@@ -531,3 +564,163 @@ def test_name_status_rename_reports_both_paths(tmp_path):
     )
     out = _run(body, tmp_path, changed=["R100\tevil.py\tnotes.md"])
     assert out.returncode == 1, out.stdout + out.stderr
+
+
+def test_lazy_continuation_marker_inside_quote_is_quoted(tmp_path):
+    """Round 6 M1: a line after "> prose" stays in the quote when padded with an invisible char."""
+    body = (
+        "> quoted prose\n"
+        "\u200b<!-- claims:begin\n"
+        "json-eq: linkrot_summary.total_broken == 3\n"
+        "claims:end -->\n"
+    )
+    out = _run(body, tmp_path)
+    assert out.returncode == 2, out.stdout + out.stderr
+    assert "block quote" in (out.stdout + out.stderr)
+
+
+def test_lazy_continuation_with_combining_mark_is_quoted(tmp_path):
+    """Same rule for a combining mark: it cannot open an HTML block either."""
+    body = (
+        "> quoted prose\n"
+        "\u0301<!-- claims:begin\n"
+        "json-eq: linkrot_summary.total_broken == 3\n"
+        "claims:end -->\n"
+    )
+    out = _run(body, tmp_path)
+    assert out.returncode == 2, out.stdout + out.stderr
+    assert "block quote" in (out.stdout + out.stderr)
+
+
+def test_bare_marker_after_quote_line_escapes_the_quote(tmp_path):
+    """L1 control: an HTML block can interrupt a paragraph, so this one is real."""
+    body = (
+        "> quoted prose\n"
+        "<!-- claims:begin\n"
+        "json-eq: linkrot_summary.total_broken == 3\n"
+        "claims:end -->\n"
+    )
+    out = _run(body, tmp_path)
+    assert out.returncode == 0, out.stdout + out.stderr
+
+
+def test_blank_line_closes_the_quote(tmp_path):
+    """A blank line ends the block quote, so the block after it is a real claim."""
+    body = (
+        "> quoted prose\n"
+        "\n"
+        "<!-- claims:begin\n"
+        "json-eq: linkrot_summary.total_broken == 3\n"
+        "claims:end -->\n"
+    )
+    out = _run(body, tmp_path)
+    assert out.returncode == 0, out.stdout + out.stderr
+
+
+def test_invisible_only_line_is_not_a_blank_line(tmp_path):
+    """Round 7 W7-1: CommonMark blank = spaces/tabs only. NBSP/ZWSP lines keep the quote open."""
+    body = (
+        "> quoted prose\n"
+        "{pad}\n"
+        "\u200b<!-- claims:begin\n"
+        "json-eq: linkrot_summary.total_broken == 3\n"
+        "claims:end -->\n"
+    )
+    for name, pad in (("nbsp", "\u00a0"), ("zwsp", "\u200b"), ("shy", "\u00ad"), ("combining", "\u0301")):
+        out = _run(body.format(pad=pad), tmp_path)
+        assert out.returncode == 2, name + out.stdout + out.stderr
+        assert "block quote" in (out.stdout + out.stderr)
+
+
+def test_phantom_quote_prefix_cannot_hide_a_second_block(tmp_path):
+    """Round 7 W7-2: a ZWSP before ">" must not open a quote that swallows block two."""
+    body = (
+        "<!-- claims:begin\n"
+        "json-eq: linkrot_summary.total_broken == 3\n"
+        "claims:end -->\n"
+        "\n"
+        "\u200b> note\n"
+        "\u200b<!-- claims:begin\n"
+        "json: fabricated.path\n"
+        "claims:end -->\n"
+    )
+    out = _run(body, tmp_path)
+    assert out.returncode == 2, out.stdout + out.stderr
+    assert "claims blocks found" in (out.stdout + out.stderr)
+
+
+
+def test_indented_code_block_is_not_a_claim(tmp_path):
+    """Round 9 A2: 4 spaces makes it code to the reader, so it is not a claim.
+
+    This gap was known before the parser switch and is closed by the same rule:
+    the block is owned by an indented code block, not by the document.
+    """
+    body = (
+        "    <!-- claims:begin\n"
+        "    json-eq: linkrot_summary.total_broken == 3\n"
+        "    claims:end -->\n"
+    )
+    out = _run(body, tmp_path)
+    assert out.returncode == 2, out.stdout + out.stderr
+    assert "indented code block" in (out.stdout + out.stderr)
+
+
+def test_tab_indented_marker_is_not_a_claim(tmp_path):
+    """Round 9 C2: a tab is four columns, so the marker reads as indented code."""
+    body = "\t<!-- claims:begin\n\tjson-eq: linkrot_summary.total_broken == 3\n\tclaims:end -->\n"
+    out = _run(body, tmp_path)
+    assert out.returncode == 2, out.stdout + out.stderr
+    assert "indented code block" in (out.stdout + out.stderr)
+
+
+def test_tab_indented_quote_inside_a_list_is_still_a_quote(tmp_path):
+    """Round 9 T4f: the tab width depends on the container the line sits in.
+
+    After "- a" the content column is 2, so a tab puts "> note" inside the list
+    item, where it is a block quote. No absolute-indent regex can see this; the
+    parser can. This was the bypass that ended the mask era.
+    """
+    body = (
+        "- a\n"
+        "\t> note\n"
+        "\t\u200b<!-- claims:begin\n"
+        "\tjson-eq: linkrot_summary.total_broken == 3\n"
+        "\tclaims:end -->\n"
+    )
+    out = _run(body, tmp_path)
+    assert out.returncode == 2, out.stdout + out.stderr
+    assert "block quote" in (out.stdout + out.stderr)
+
+
+def test_marker_nested_in_a_list_item_is_named_as_nested(tmp_path):
+    """A claim belongs at the document level; a list item is named when it is not."""
+    body = (
+        "- a\n"
+        "\n"
+        "    <!-- claims:begin\n"
+        "    json-eq: linkrot_summary.total_broken == 3\n"
+        "    claims:end -->\n"
+    )
+    out = _run(body, tmp_path)
+    assert out.returncode == 2, out.stdout + out.stderr
+    text = out.stdout + out.stderr
+    assert "nested inside" in text or "block quote" in text
+
+
+def test_changed_file_path_with_line_separator_stays_one_path(tmp_path):
+    """One line definition for the whole script.
+
+    str.splitlines() also breaks on U+2028, so a path containing one used to be
+    read as two entries: "docs/a" (not a doc) plus "b.md". That turned a
+    documentation-only change into a code change and demanded a value
+    assertion for a file nobody edited.
+    """
+    path = "docs/a" + chr(0x2028) + "b.md"
+    body = (
+        "<!-- claims:begin\n"
+        "no-claims: docs 下只有措辞调整，没有脚本行为变化\n"
+        "claims:end -->\n"
+    )
+    out = _run(body, tmp_path, changed=[path])
+    assert out.returncode == 0, out.stdout + out.stderr

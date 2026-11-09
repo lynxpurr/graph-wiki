@@ -163,6 +163,7 @@ cd /path/to/your/wiki
 - `networkx`
 - `scipy`
 - `python-louvain` (community detection)
+- `markdown-it-py` (PR claims gate block structure, `scripts/verify-claims.py`)
 
 ## 适用场景
 

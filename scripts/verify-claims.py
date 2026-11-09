@@ -26,7 +26,10 @@ Fail-closed rules:
 
 Marker discipline: a marker only counts when it occupies its own line. Text that
 merely mentions the marker inline is prose, not a block. Zero-width characters are
-stripped before counting, so a disguised marker cannot hide a block.
+stripped before counting, so a disguised marker cannot hide a block. A code fence
+and a block quote are both quotation containers: a marker inside either reads as
+a quotation, not a claim — and when nothing usable remains, the error names the
+container instead of just saying the block is missing.
 
 Exit codes: 0 all claims hold, 1 a claim failed, 2 the block is missing/malformed.
 """
@@ -56,9 +59,38 @@ MARKER_BEGIN_KEY = "<!--claims:begin"
 MARKER_END_KEY = "claims:end-->"
 INVISIBLE_CATEGORIES = ("C", "Z", "M")
 
-FENCE_OPEN_RE = re.compile(r"^[ \t]*(`{3,}|~{3,})(.*)$")
+# ---------------------------------------------------------------------------
+# Block structure: the reader's own parse is the only authority.
+#
+# Rounds 5-9 each added a hand-written mask -- fences, block quotes, lazy
+# continuations, a rewritten blank-line definition -- and each round the next
+# attack lived in the seam between that mask and CommonMark. Round 9 closed
+# the argument: a tab-indented '>' inside a list item is a block quote to
+# every reader, and no absolute-indent regex can see it, because the width of
+# that tab depends on the container the line sits in. Container nesting is not
+# recoverable from a line scan.
+#
+# So structure now comes from a real CommonMark parser, while marker identity
+# stays line-based (visible_key). The two rules no longer share a definition,
+# which is the gap they disagreed across for four rounds.
+# ---------------------------------------------------------------------------
 
+try:
+    from markdown_it import MarkdownIt
+except ImportError:  # fail closed: never fall back to the masks this replaced
+    sys.stderr.write(
+        "FAIL  the CommonMark parser (markdown-it-py) is unavailable, so block "
+        "structure cannot be checked. Install scripts/requirements.txt. This "
+        "gate will not fall back to line masks: a gate that silently checks "
+        "less than it claims is worse than no gate.")
+    sys.stderr.write(chr(10))
+    raise SystemExit(5)
 
+# Where a reader sees a document-level claim. Inside a quote it reads as
+# someone else's words; inside a fence or indented code it does not read at all.
+# Marker identity stays line-based: invisible padding must never change whether
+# a line is a marker. This is the ONLY remaining lens, and it decides identity
+# alone -- never structure, which is what the deleted masks used it for.
 def visible_key(line: str) -> str:
     """The line as a reader sees it: invisible, spacing, combining chars removed."""
     return "".join(
@@ -66,66 +98,144 @@ def visible_key(line: str) -> str:
         if unicodedata.category(ch)[0] not in INVISIBLE_CATEGORIES
     )
 
+TOP_LEVEL_OWNERS = ("html_block", "paragraph")
 
-def fence_mask(lines: list[str]) -> list[bool]:
-    """Flag the lines a Markdown reader would treat as fenced code (CommonMark)."""
-    mask = [False] * len(lines)
-    i = 0
-    while i < len(lines):
-        m = FENCE_OPEN_RE.match(lines[i])
-        if not m:
-            i += 1
+# Leaf blocks the parser tracks line by line.
+LEAF_BLOCKS = ("html_block", "fence", "code_block")
+
+_PARSER = MarkdownIt("commonmark")
+
+
+def normalize_newlines(body: str) -> str:
+    """CommonMark line endings are LF, CRLF and CR -- and only those.
+
+    Marker identity splits the body into lines and the parser numbers the same
+    lines, so both must use one definition. str.splitlines() also breaks on
+    U+2028, U+0085, form feed and vertical tab, which shifts every index after
+    the first such character: a marker then lands on an unrelated line, which
+    is a bypass in the permissive direction and a nonsense message in the
+    strict one. Normalising first keeps the two views identical by
+    construction.
+    """
+    return body.replace(chr(13) + chr(10), chr(10)).replace(chr(13), chr(10))
+
+
+def block_structure(body: str) -> list[tuple[str, tuple[str, ...]]]:
+    """Per source line: the block that owns it, and the ancestor chain.
+
+    Inner tokens come after outer ones and overwrite them, so the answer is
+    always the innermost block -- the one a marker actually sits in.
+    """
+    body = normalize_newlines(body)
+    lines = body.split(chr(10))
+    where: list[tuple[str, tuple[str, ...]]] = [("", ())] * len(lines)
+    stack: list[str] = []
+    for tok in _PARSER.parse(body):
+        if tok.nesting == -1:
+            if stack:
+                stack.pop()
             continue
-        run, info = m.group(1), m.group(2)
-        if run[0] == "`" and "`" in info:
-            i += 1  # a backtick fence may not carry backticks in its info string
+        if tok.nesting == 1:
+            owner = tok.type[:-5] if tok.type.endswith("_open") else tok.type
+            ancestors = tuple(stack)
+            stack.append(owner)
+        elif tok.type in LEAF_BLOCKS:
+            owner, ancestors = tok.type, tuple(stack)
+        else:
             continue
-        marker = run[0]
-        # Closing fence: same character, at least as long, and nothing else on it.
-        close_re = re.compile(
-            r"^[ \t]*" + re.escape(marker) + "{" + str(len(run)) + r",}[ \t]*$"
+        if tok.map:
+            start, end = tok.map
+            for i in range(max(0, start), min(len(lines), end)):
+                where[i] = (owner, ancestors)
+    return where
+
+
+def displace_reason(where, line_no: int):
+    """Why a marker on this line is not a document-level claim (None if it is)."""
+    owner, ancestors = where[line_no]
+    if not ancestors and owner in TOP_LEVEL_OWNERS:
+        return None
+    if not owner:
+        return (
+            "the claims block is not a document-level block in the parsed "
+            "structure, so the reader sees no document-level claim. Move it to "
+            "the top level."
         )
-        mask[i] = True
-        j = i + 1
-        while j < len(lines):
-            mask[j] = True
-            if close_re.match(lines[j]):
-                break
-            j += 1
-        i = j + 1
-    return mask
+    if owner == "fence":
+        return (
+            "the claims block sits inside a code fence, so it reads as a " +
+            "quotation rather than a claim. Move it out of the fence."
+        )
+    if owner == "code_block":
+        return (
+            "the claims block sits inside an indented code block (4+ spaces or " +
+            "a tab), so it reads as code rather than a claim. Remove the " +
+            "indentation."
+        )
+    if "blockquote" in ancestors:
+        return (
+            "the claims block sits inside a block quote (its lines carry the " +
+            "quote marker), so it reads as a quotation rather than a claim. " +
+            "Move it out of the block quote."
+        )
+    chain = " > ".join(list(ancestors) + [owner or "document"])
+    return (
+        "the claims block is nested inside " + chain + ", so the reader sees " +
+        "no document-level claim. Move it to the top level."
+    )
+
+# A marker inside a quote carries an arrow run, so it only matches the canonical
+# key once that run is removed. Diagnostic only -- see note in extract_claims.
+ARROW_PREFIX_RE = re.compile("^>+")
+
+
+def strip_arrow_prefix(visible: str) -> str:
+    m = ARROW_PREFIX_RE.match(visible)
+    return visible[m.end():] if m else visible
 
 
 def extract_claims(body: str) -> tuple[list[str], str | None]:
-    """Return (claims, error). A marker is a whole line, outside any code fence."""
-    lines = body.splitlines()
-    mask = fence_mask(lines)
+    """Return (claims, error).
+
+    A marker is a whole line wherever it sits, but it only counts as a claim
+    where the reader puts it at the document level. Both statements come from
+    one parse, so there is no second definition left to drift.
+    """
+    body = normalize_newlines(body)
+    lines = body.split(chr(10))
+    where = block_structure(body)
     begins = [i for i, ln in enumerate(lines) if visible_key(ln) == MARKER_BEGIN_KEY]
-    unfenced = [i for i in begins if not mask[i]]
-    if not unfenced:
+    usable = [i for i in begins if displace_reason(where, i) is None]
+    if not usable:
         if begins:
-            return [], (
-                "the claims block sits inside a code fence, so it reads as a "
-                "quotation rather than a claim. Move it out of the fence."
-            )
+            return [], displace_reason(where, begins[0])
+        # Identity is exact-line, so a marker the reader sees inside a quote only
+        # matches the canonical key once the arrow run is removed. That lens is
+        # diagnostic: the reason still comes from the parse, which knows the line
+        # is inside a block quote. It is not a second structural rule.
+        quoted = [i for i, ln in enumerate(lines)
+                  if strip_arrow_prefix(visible_key(ln)) == MARKER_BEGIN_KEY]
+        if quoted and displace_reason(where, quoted[0]):
+            return [], displace_reason(where, quoted[0])
         return [], "no claims block found in PR body"
-    if len(unfenced) > 1:
+    if len(usable) > 1:
         return [], (
-            f"{len(unfenced)} claims blocks found; exactly one is allowed. "
-            "Extra blocks are never silently ignored — that was a bypass (#14)."
+            str(len(usable)) + " claims blocks found; exactly one is allowed. " +
+            "Extra blocks are never silently ignored -- that was a bypass (#14)."
         )
-    start = unfenced[0]
+    start = usable[0]
     end = next(
         (i for i in range(start + 1, len(lines))
-         if not mask[i] and visible_key(lines[i]) == MARKER_END_KEY),
+         if visible_key(lines[i]) == MARKER_END_KEY and displace_reason(where, i) is None),
         None,
     )
     if end is None:
-        return [], "claims block has no 'claims:end -->' terminator line"
+        return [], "claims block has no terminator line (claims:end -->)"
     claims = [ln.strip() for ln in lines[start + 1:end] if ln.strip()]
     if not claims:
         return [], "claims block is empty"
     return claims, None
+
 
 def resolve(obj, path: str):
     """Resolve a dotted path; a [] suffix means every element of a list."""
@@ -279,7 +389,8 @@ def read_changed_files(path) -> list[str] | None:
     if not path:
         return None
     out: list[str] = []
-    for line in Path(path).read_text(encoding="utf-8").splitlines():
+    text = normalize_newlines(Path(path).read_text(encoding="utf-8"))
+    for line in text.split(chr(10)):
         line = line.strip()
         if not line:
             continue

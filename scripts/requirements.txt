@@ -5,3 +5,5 @@
 networkx>=3.0
 scipy>=1.6
 python-louvain>=0.16
+# PR-claims gate: CommonMark block structure (scripts/verify-claims.py)
+markdown-it-py>=3.0
