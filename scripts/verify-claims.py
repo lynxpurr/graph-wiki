@@ -106,13 +106,28 @@ LEAF_BLOCKS = ("html_block", "fence", "code_block")
 _PARSER = MarkdownIt("commonmark")
 
 
+def normalize_newlines(body: str) -> str:
+    """CommonMark line endings are LF, CRLF and CR -- and only those.
+
+    Marker identity splits the body into lines and the parser numbers the same
+    lines, so both must use one definition. str.splitlines() also breaks on
+    U+2028, U+0085, form feed and vertical tab, which shifts every index after
+    the first such character: a marker then lands on an unrelated line, which
+    is a bypass in the permissive direction and a nonsense message in the
+    strict one. Normalising first keeps the two views identical by
+    construction.
+    """
+    return body.replace(chr(13) + chr(10), chr(10)).replace(chr(13), chr(10))
+
+
 def block_structure(body: str) -> list[tuple[str, tuple[str, ...]]]:
     """Per source line: the block that owns it, and the ancestor chain.
 
     Inner tokens come after outer ones and overwrite them, so the answer is
     always the innermost block -- the one a marker actually sits in.
     """
-    lines = body.splitlines()
+    body = normalize_newlines(body)
+    lines = body.split(chr(10))
     where: list[tuple[str, tuple[str, ...]]] = [("", ())] * len(lines)
     stack: list[str] = []
     for tok in _PARSER.parse(body):
@@ -140,6 +155,12 @@ def displace_reason(where, line_no: int):
     owner, ancestors = where[line_no]
     if not ancestors and owner in TOP_LEVEL_OWNERS:
         return None
+    if not owner:
+        return (
+            "the claims block is not a document-level block in the parsed "
+            "structure, so the reader sees no document-level claim. Move it to "
+            "the top level."
+        )
     if owner == "fence":
         return (
             "the claims block sits inside a code fence, so it reads as a " +
@@ -180,7 +201,8 @@ def extract_claims(body: str) -> tuple[list[str], str | None]:
     where the reader puts it at the document level. Both statements come from
     one parse, so there is no second definition left to drift.
     """
-    lines = body.splitlines()
+    body = normalize_newlines(body)
+    lines = body.split(chr(10))
     where = block_structure(body)
     begins = [i for i, ln in enumerate(lines) if visible_key(ln) == MARKER_BEGIN_KEY]
     usable = [i for i in begins if displace_reason(where, i) is None]
