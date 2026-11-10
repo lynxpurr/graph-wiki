@@ -1,6 +1,24 @@
 # Changelog
 
-## Unreleased — code regions come from a CommonMark parser
+## v3.11.1 (2026-11-10) — documented-scores 门禁改断言计数器指纹
+
+### Fixed
+
+**documented-scores 门禁对代码区不敏感，已按计数器补齐。** 它比对的是聚合总分，
+而豁免面变化不上浮到总分：同一份含代码区死链的语料，旧实现 `total_broken=2` / `code_block_exempt=1`，
+新实现 `0` / `3`，总分都是 `79/120`。
+
+补法两件：
+
+- `examples/mini-wiki/concepts/algorithms.md` 的「Pseudocode is a quotation」一节补三段代码区内的 wikilink
+  （`~~~` 围栏、4 空格缩进块、行内代码各一条）+ 一条真实链接；
+- CI 增 `documented link-rot counters` 一步，断言示例语料的 `total_broken=0`、`unique_broken=0`、
+  `code_block_exempt=3`。非零对照：换回旧实现这三项变 `2/2/1`，该步判红。
+
+四条 documented 聚合分数**未变**（`79/120`、`85/130`、`100.14/130`、`113.61/140`）——语料加在既有页内，
+没有新增节点，所以只动计数器不动聚合分。
+
+## v3.11.0 (2026-11-10) — code regions come from a CommonMark parser
 
 ### Fixed
 
@@ -40,23 +58,7 @@
 6 条新回归（共 248 passed）：`~~~` 围栏、4 空格缩进块、未闭合围栏、
 列表续行**不是**代码（非零对照，防漏报）、段落续行不是代码、行内代码无回归。
 
-### Gate
-
-**documented-scores 门禁对代码区不敏感，已按计数器补齐。** 它比对的是聚合总分，
-而豁免面变化不上浮到总分：同一份含代码区死链的语料，旧实现 `total_broken=2` / `code_block_exempt=1`，
-新实现 `0` / `3`，总分都是 `79/120`。
-
-补法两件：
-
-- `examples/mini-wiki/concepts/algorithms.md` 的「Pseudocode is a quotation」一节补三段代码区内的 wikilink
-  （`~~~` 围栏、4 空格缩进块、行内代码各一条）+ 一条真实链接；
-- CI 增 `documented link-rot counters` 一步，断言示例语料的 `total_broken=0`、`unique_broken=0`、
-  `code_block_exempt=3`。非零对照：换回旧实现这三项变 `2/2/1`，该步判红。
-
-四条 documented 聚合分数**未变**（`79/120`、`85/130`、`100.14/130`、`113.61/140`）——语料加在既有页内，
-没有新增节点，所以只动计数器不动聚合分。
-
-## Unreleased — empty wikilink targets are a malformed link, not link-rot
+## v3.11.0 (2026-11-10) — empty wikilink targets are a malformed link, not link-rot
 
 ### Changed
 
@@ -88,7 +90,7 @@
 来自一次独立测试：外部测试方在真实 wiki 上注入空目标，观察到 `total_broken` 从 3 涨到 4，
 且 `unique_broken` 的语义无法从输出自证。两条都不是崩溃级缺陷，是「数字看着对、含义得追问」。
 
-## Unreleased — pre-push privacy gate
+## v3.11.0 (2026-11-10) — pre-push privacy gate
 
 ### Added
 
@@ -98,13 +100,16 @@
   `$(git rev-parse --git-dir)/privacy-patterns.local`. Enable with `git config core.hooksPath .githooks`.
 - Real names and hostnames stay out of the script on purpose: a scanner that hardcodes the value it
   guards leaks that value the moment the repository is public.
+- **`.gitignore` 增补 `.scratch/`。** 临时产物目录此前未被忽略：它当时是未跟踪状态，
+  但只要有人执行一次 `git add -A`，其中的日志、诊断 JSON 与本地绝对路径就会进入暂存区，
+  只剩 pre-push 钩子兜底。能靠 `.gitignore` 挡住的，不应该依赖钩子。
 
 ### Notes
 
 - The 10.x private range is deliberately not matched: changelogs are full of version strings like
   `10.5.2`, and a gate that cries wolf gets bypassed by habit.
 
-## Unreleased — claims gate: block structure comes from a CommonMark parse
+## v3.11.0 (2026-11-10) — claims gate: block structure comes from a CommonMark parse
 
 ### Changed (gate internals)
 
@@ -133,7 +138,7 @@
 - 48 -> 52 cases: indented code, tab-indented marker, tab-indented quote inside a list item,
   marker nested in a list item.
 
-## Unreleased — `weekly-health-check` exit codes + severity baseline semantics
+## v3.11.0 (2026-11-10) — `weekly-health-check` exit codes + severity baseline semantics
 
 ### Changed (behavior change)
 
