@@ -7,7 +7,8 @@
 - **`[[   ]]`（空白目标）不再计入死链。** 之前它被当作「指向不存在页面」记进 `total_broken`，
   产生一条 `README -> ""` 的 D4 条目——一个作者无法按「缺失页面」去修的东西。现在按豁免处理，
   与代码围栏（#6）、`skill:` 前缀（#10）同一标准：**豁免但必须可观测**。
-  - 新增 `linkrot_summary.empty_target_skipped` 计数与 `empty_target_samples` 样本；
+  - 新增 `linkrot_summary.empty_target_skipped` 计数；样本的位置与另两个豁免一致，
+    出现在 `diagnosis` 的 D4d 条目 `evidence.samples` 里，不单独占 summary 字段；
   - `diagnosis` 里新增 D4d P2 条目披露豁免量，不静默丢弃。
 - **`[[]]`（空括号）本来就不是 wikilink**：解析正则要求 1 个以上非空白字符，它不进解析，
   也不计入任何豁免计数。两者在 diff 里难以区分，行为不同，已由测试固定。
