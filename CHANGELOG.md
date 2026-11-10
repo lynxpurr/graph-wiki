@@ -18,7 +18,7 @@
 ### Measured
 
 改动前后对 8 个语料做全字段对比（5 个自造 corpus + claims fixture + 本仓 + 一个真实 wiki）：
-`linkrot_summary` 只有一处在真实 wiki 上变化 —— 一段 5 空格缩进的引用转录，
+`linkrot_summary` 只有一处在真实 wiki 上变化 —— 一段 4 空格缩进的引用转录
 `code_block_exempt` 32 → 33，`total_broken` 不变（该链接目标页存在，从来不是死链）；
 其余七个语料逐字段 IDENTICAL。
 
