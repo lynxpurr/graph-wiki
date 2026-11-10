@@ -159,6 +159,14 @@ total_broken == unique_broken + duplicated_entries
 
 每个豁免量同时以 P2 条目出现在 `diagnosis` 里，附带样本，避免「豁免」变成「静默消失」。
 
+**示例语料覆盖三个豁免面，门禁断言的是计数器而不是总分。** `examples/mini-wiki/concepts/algorithms.md`
+的「Pseudocode is a quotation」一节放了三段代码区内的 wikilink（``` 围栏、4 空格缩进块、行内代码各一条）
+与一条真实链接：跑 `--source wiki` 得 `code_block_exempt=3`、`total_broken=0`。
+
+总分对这类差异**完全不敏感**——同一份语料在旧的行扫描实现上是 `total_broken=2` / `code_block_exempt=1`，
+而聚合分数一字不差（`79/120`）。所以 CI 断言的是这两个计数器：只有它们能拦住「代码区判定回归」
+这一类缺陷，让围栏里的示例链接重新被算成死链。总分只用来守评分维度，不用来守豁免面。
+
 **扫描面**：只有**非隐藏目录**下的 `.md` 参与图构建——目录遍历排除了 `.` 开头的目录
 （`.obsidian/`、`.githooks/`、`.backup-*/` 等）与 `node_modules/`。所以一处链接是否计入死链，
 取决于它所在目录是否在扫描面内：`.githooks/README.md` 里同样的 4 空格缩进块，单独当 wiki-root

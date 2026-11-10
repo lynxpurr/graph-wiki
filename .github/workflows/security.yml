@@ -86,6 +86,25 @@ jobs:
           check "85/130" .venv/bin/python scripts/graph-test-suite.py --source ontology --ontology-path examples/mini-ontology.jsonl --json
           check "100.14/130" .venv/bin/python scripts/graph-test-suite.py --source wiki,ontology --wiki-root examples/mini-wiki --ontology-path examples/mini-ontology.jsonl --json
           check "113.61/140" .venv/bin/python scripts/graph-test-suite.py --source wiki,ontology,ragflow --wiki-root examples/mini-wiki --ontology-path examples/mini-ontology.jsonl --ragflow-path examples/mini-ragflow.jsonl --json
+      - name: documented link-rot counters match actual output
+        run: |
+          set -euo pipefail
+          # The aggregate score cannot see a code-region regression: a link inside
+          # a code region never counts as broken once the region is honoured, so
+          # total_broken stays 0 and the score does not move either way. The
+          # counters are the only documented numbers that react, so assert them.
+          .venv/bin/python scripts/graph-diagnose.py --source wiki --wiki-root examples/mini-wiki --json > /tmp/linkrot.json
+          python3 - <<'PY'
+          import json
+          d = json.load(open('/tmp/linkrot.json'))['linkrot_summary']
+          want = {'total_broken': 0, 'unique_broken': 0, 'code_block_exempt': 3}
+          got = {k: d[k] for k in want}
+          print('  expected', want)
+          print('  got     ', got)
+          if got != want:
+              print('::error::documented link-rot counter drift: expected', want, 'got', got)
+              raise SystemExit(1)
+          PY
       - name: --json stays pure even with stderr merged
         run: |
           .venv/bin/python scripts/graph-test-suite.py --source wiki,ontology             --wiki-root examples/mini-wiki --ontology-path examples/mini-ontology.jsonl --json 2>&1             | python3 -c "import json,sys; json.load(sys.stdin); print('merged-stream JSON OK')"
