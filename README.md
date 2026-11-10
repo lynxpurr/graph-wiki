@@ -153,7 +153,7 @@ total_broken == unique_broken + duplicated_entries
 
 | 字段 | 豁免理由 |
 |------|---------|
-| `code_block_exempt` | 代码围栏 / 行内代码内的 wikilink——代码示例不是引用 |
+| `code_block_exempt` | 代码围栏（``` 与 ~~~）、缩进代码块、行内代码内的 wikilink——代码示例不是引用 |
 | `skill_scheme_exempt` | `skill:` / `skills:` 前缀——不是页面链接 |
 | `empty_target_skipped` | 空或全空白的 `[[   ]]` 目标——**写残的链接，不是指向缺失页面** |
 
@@ -170,7 +170,10 @@ total_broken == unique_broken + duplicated_entries
 这不只是空目标豁免的事：`[[   ]]` 写进代码围栏会按 `code_block_exempt` 计数，`target` 照样是 `""`。
 所以三类键集保持一致，不留「这一类有歧义、那一类没有」的分支——那种分支的断言，迟早被一个空目标样本证伪。
 
-注意正则口径：`[[ ]]` 至少要有一个非空白字符才会被解析成 wikilink，所以`[[]]`（空括号）根本不进解析、也不计入 `empty_target_skipped`；`[[   ]]`（空格）会进解析然后被豁免计数。两者在 diff 里长得一样，行为不同。
+空目标类按**解析后**的 `target` 判定：`[[#section]]` 这类同页锚点剥掉锚点后 target 也是空串，同样落这一类。
+它不是写残的链接，只是解析后没有目标页——样本里的 `as_written`（如 `#section`）能把两者分开。
+
+注意正则口径：`[[ ]]` 至少要有一个字符才会被解析成 wikilink，所以`[[]]`（空括号）根本不进解析、也不计入 `empty_target_skipped`；单空格 `[[ ]]` 与三空格 `[[   ]]` 都会进解析然后被豁免计数（都按解析后判定）。两者在 diff 里长得一样，行为不同。
 
 ### weekly-health-check.py 退出码（行为变更）
 

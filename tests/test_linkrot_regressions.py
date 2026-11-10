@@ -420,3 +420,79 @@ def test_exempt_sample_key_sets_are_uniform(load_script_module, tmp_path):
     expected = {"source", "target", "as_written"}
     for name, keys in key_sets.items():
         assert keys == expected, (name, keys)
+
+def test_tilde_fence_counts_as_code(load_script_module, tmp_path):
+    """A ~~~ fence is a code fence; a reference inside it is not a reference.
+
+    Observed by an independent verifier: the scanner keyed on backticks alone,
+    so a tilde fence read as prose and the link inside was reported as link-rot
+    — a real page missing, when it was a code sample.
+    """
+    root = tmp_path / "wiki"
+    _write(root, "a.md", "# a\n\n~~~md\n[[in-tilde]]\n~~~\n")
+    diag = load_script_module("graph-diagnose.py")
+    result = diag.diagnose_linkrot(None, {}, wiki_root=str(root))
+
+    assert result["code_block_exempt"] == 1, result
+    assert result["total_broken"] == 0, result
+    assert result["code_block_samples"][0]["target"] == "in-tilde"
+
+
+def test_indented_code_block_counts_as_code(load_script_module, tmp_path):
+    """A 4-space indented block is code; links in it must not count as link-rot."""
+    root = tmp_path / "wiki"
+    _write(root, "a.md", "# a\n\n    [[in-indent]]\n")
+    diag = load_script_module("graph-diagnose.py")
+    result = diag.diagnose_linkrot(None, {}, wiki_root=str(root))
+
+    assert result["code_block_exempt"] == 1, result
+    assert result["total_broken"] == 0, result
+
+
+def test_unclosed_fence_runs_to_eof(load_script_module, tmp_path):
+    """An unterminated fence is code to the end of the file, not a crash."""
+    root = tmp_path / "wiki"
+    _write(root, "a.md", "# a\n\n```md\n[[to-eof]]\n")
+    diag = load_script_module("graph-diagnose.py")
+    result = diag.diagnose_linkrot(None, {}, wiki_root=str(root))
+
+    assert result["code_block_exempt"] == 1, result
+    assert result["total_broken"] == 0, result
+
+
+def test_list_continuation_is_not_code(load_script_module, tmp_path):
+    """Non-zero control: 4 spaces after a list marker is a paragraph, not code.
+
+    Reading every indented line as code would exempt real references and hide
+    broken links - a missed report is worse than a false one, so the guard
+    matters more than the new exemption.
+    """
+    root = tmp_path / "wiki"
+    _write(root, "a.md", "# a\n\n- item\n\n    [[missing-target]]\n")
+    diag = load_script_module("graph-diagnose.py")
+    result = diag.diagnose_linkrot(None, {}, wiki_root=str(root))
+
+    assert result["code_block_exempt"] == 0, result
+    assert result["total_broken"] == 1, result
+
+
+def test_paragraph_continuation_is_not_code(load_script_module, tmp_path):
+    """An indented line that continues a paragraph is prose, not code."""
+    root = tmp_path / "wiki"
+    _write(root, "a.md", "# a\n\n这是一段。\n    [[lazy-continuation]]\n")
+    diag = load_script_module("graph-diagnose.py")
+    result = diag.diagnose_linkrot(None, {}, wiki_root=str(root))
+
+    assert result["code_block_exempt"] == 0, result
+    assert result["total_broken"] == 1, result
+
+
+def test_inline_code_span_is_still_exempt(load_script_module, tmp_path):
+    """The inline-code exemption survived the rewrite (no regression)."""
+    root = tmp_path / "wiki"
+    _write(root, "a.md", "# a\n\n正文 `[[inline-code]]` 结尾\n")
+    diag = load_script_module("graph-diagnose.py")
+    result = diag.diagnose_linkrot(None, {}, wiki_root=str(root))
+
+    assert result["code_block_exempt"] == 1, result
+    assert result["total_broken"] == 0, result
