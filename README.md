@@ -159,9 +159,19 @@ total_broken == unique_broken + duplicated_entries
 
 每个豁免量同时以 P2 条目出现在 `diagnosis` 里，附带样本，避免「豁免」变成「静默消失」。
 
-样本有三格：`source`（来源页）、`target`（解析后的目标——空目标一律归一成 `""`）、`as_written`（**作者实际写的形态**，保留 `|label`、`#anchor` 与全角空格）。
-加 `as_written` 的原因很实在：解析器在 yield 之前就剥掉了标签和锚点，所以 `[[   ]]`、`[[   |label]]`、`[[   #section]]`、`[[　]]` 四种写法走到样本里 `target` 全是 `""`。只给一个空串，等于告诉人「有一处写残了，自己找去」——
-一个定位不到的计数，只比静默丢弃好一点。
+样本键**按豁免类型不同，不都是三格**：
+
+| 豁免 | 样本键 |
+|---|---|
+| `empty_target_skipped`（空目标） | `source`、`target`、`as_written` |
+| `code_block_exempt`、`skill_scheme_exempt` | `source`、`target` |
+
+`target` 是解析后的目标（空目标一律归一成 `""`）。
+`as_written` 是**作者实际写的形态**，保留 `|label`、`#anchor` 与全角空格，目前只加在空目标样本上。
+
+为什么只给空目标加：解析器在 yield 之前就剥掉了标签和锚点，所以 `[[   ]]`、`[[   |label]]`、`[[   #section]]`、`[[　]]` 四种写法走到样本里 `target` 全是 `""`。
+只给一个空串，等于告诉人「有一处写残了，自己找去」——一个定位不到的计数，只比静默丢弃好一点。
+另两类豁免的 `target` 本身带内容（`code-one-target`、`skill:foo`），不存在这个歧义，所以没加。
 
 注意正则口径：`[[ ]]` 至少要有一个非空白字符才会被解析成 wikilink，所以`[[]]`（空括号）根本不进解析、也不计入 `empty_target_skipped`；`[[   ]]`（空格）会进解析然后被豁免计数。两者在 diff 里长得一样，行为不同。
 
