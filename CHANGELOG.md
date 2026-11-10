@@ -1,5 +1,40 @@
 # Changelog
 
+## Unreleased — code regions come from a CommonMark parser
+
+### Fixed
+
+- **`~~~` 围栏与缩进代码块里的 wikilink 不再被当成死链。** 代码区判定原来只认反引号，
+  于是 `~~~` 围栏、4 空格 / tab 缩进的代码块被读成正文：里面的链接按「指向不存在的页面」
+  计入 `total_broken`，同时 `code_block_exempt` 少计。
+- **代码区判定改用 CommonMark 解析器（markdown-it-py，已是 `scripts/requirements.txt` 的
+  运行时依赖），替换手写行扫描。** 手写掩码每加一条规则就在接缝处漏一条 —— 围栏字符、
+  围栏长度、缩进归属、列表续行、表格上下文都不是行扫描能还原的。
+  - 块级（围栏 / 缩进代码块）取自解析器的 `token.map`；
+  - 行内代码按 CommonMark 规则做反引号串**等长**配对，且只在块级代码区之外扫描
+    （旧实现全文扫描，围栏内的反引号串可能拖到正文里才配对）。
+  - 顺带把「每条链接扫一遍全文」降为「每个文件解析一次」。
+
+### Measured
+
+改动前后对 8 个语料做全字段对比（5 个自造 corpus + claims fixture + 本仓 + 一个真实 wiki）：
+`linkrot_summary` 只有一处在真实 wiki 上变化 —— 一段 5 空格缩进的引用转录，
+`code_block_exempt` 32 → 33，`total_broken` 不变（该链接目标页存在，从来不是死链）；
+其余七个语料逐字段 IDENTICAL。
+
+### Documented
+
+- README 豁免表补明 `code_block_exempt` 的覆盖面：反引号围栏、`~~~` 围栏、缩进代码块、行内代码。
+- README 正则口径一句改正：原文写「至少要有一个非空白字符」，实测单空格 `[[ ]]` 也进解析
+  并计入 `empty_target_skipped`，应为「至少要有一个字符」。
+- README 补一句：空目标类按**解析后** `target` 判定，`[[#section]]` 这类同页锚点剥掉锚点后
+  也是空串、同样落这一类；样本的 `as_written` 可区分二者。
+
+### Test
+
+6 条新回归（共 248 passed）：`~~~` 围栏、4 空格缩进块、未闭合围栏、
+列表续行**不是**代码（非零对照，防漏报）、段落续行不是代码、行内代码无回归。
+
 ## Unreleased — empty wikilink targets are a malformed link, not link-rot
 
 ### Changed

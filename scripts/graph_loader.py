@@ -12,6 +12,8 @@ from datetime import datetime
 from typing import Tuple, Iterator, Dict, List
 import networkx as nx
 
+from markdown_it import MarkdownIt
+
 from _privacy_filter import filter_ontology
 
 
@@ -49,38 +51,124 @@ def default_wiki_root() -> str:
 
 _WIKILINK_RE = re.compile(r'\[\[([^\[\]]+?)\]\]')
 
-def _is_inside_code(content: str, start: int, end: int) -> bool:
-    """Check if byte range [start, end) is inside a fenced or inline code block."""
-    i = 0; in_inline = False; inline_start = -1
-    while i < len(content):
-        if content[i] != '`': i += 1; continue
-        bt = 0; j = i
-        while j < len(content) and content[j] == '`': bt += 1; j += 1
-        line_start = content.rfind('\n', 0, i) + 1
-        is_line_start = content[line_start:i].strip() == ''
-        if bt >= 3 and is_line_start:
-            close = content.find('`' * bt, j)
-            if close == -1: return start >= i
-            if start >= i and end <= close + bt: return True
-            i = close + bt
-        else:
-            if not in_inline: in_inline = True; inline_start = i
-            else:
-                if start >= inline_start and end <= j: return True
-                in_inline = False
-            i = j
+def _line_offsets(content: str) -> List[int]:
+    """Char offset of every line start; index == 0-based line number."""
+    offsets = [0]
+    for i, ch in enumerate(content):
+        if ch == '\n':
+            offsets.append(i + 1)
+    return offsets
+
+
+_MD_PARSER = MarkdownIt('commonmark')
+
+
+def _block_code_spans(content: str) -> List[Tuple[int, int]]:
+    """Char ranges covered by CommonMark fenced or indented code blocks."""
+    offsets = _line_offsets(content)
+
+    def char_at(lineno: int) -> int:
+        if lineno >= len(offsets):
+            return len(content)
+        return offsets[lineno]
+
+    spans: List[Tuple[int, int]] = []
+    for tok in _MD_PARSER.parse(content):
+        if tok.type not in ('fence', 'code_block'):
+            continue
+        if not tok.map:
+            continue
+        spans.append((char_at(tok.map[0]), char_at(tok.map[1])))
+    return spans
+
+
+def _inline_code_spans(content: str,
+                       block_spans: List[Tuple[int, int]]) -> List[Tuple[int, int]]:
+    """Char ranges covered by inline code spans (matched backtick runs).
+
+    Scanned only outside block code. A backtick run that opens inside a fence
+    must not be allowed to pair up with one out in prose, which the whole-file
+    scan this replaced could do.
+    """
+    spans: List[Tuple[int, int]] = []
+    cursor = 0
+    i = 0
+    n = len(content)
+    while i < n:
+        while cursor < len(block_spans) and block_spans[cursor][1] <= i:
+            cursor += 1
+        if (cursor < len(block_spans)
+                and block_spans[cursor][0] <= i < block_spans[cursor][1]):
+            i = block_spans[cursor][1]
+            continue
+        if content[i] != '`':
+            i += 1
+            continue
+        run_end = i
+        while run_end < n and content[run_end] == '`':
+            run_end += 1
+        run = run_end - i
+        # CommonMark: a code span closes on a run of exactly equal length.
+        k = run_end
+        close = -1
+        while k < n:
+            if content[k] != '`':
+                k += 1
+                continue
+            run_close_end = k
+            while run_close_end < n and content[run_close_end] == '`':
+                run_close_end += 1
+            if run_close_end - k == run:
+                close = k
+                break
+            k = run_close_end
+        if close == -1:
+            i = run_end  # an unmatched run is literal text
+            continue
+        spans.append((i, close + run))
+        i = close + run
+    return spans
+
+
+def _code_spans(content: str) -> List[Tuple[int, int]]:
+    """Char ranges that are code, and therefore not references.
+
+    Block structure comes from a CommonMark parser, not from a hand-written
+    line scan. The scan this replaced keyed on backticks alone, so `~~~` fences
+    and 4-space indented blocks were read as prose — real references inside them
+    were reported as link-rot — and a 4-backtick line closed a 3-backtick fence
+    early. Every hand-written mask has its own seam, and which lines are code is
+    not recoverable from a line scan, so it comes from the parser.
+    """
+    block = _block_code_spans(content)
+    spans = block + _inline_code_spans(content, block)
+    spans.sort()
+    return spans
+
+
+def _span_covers(spans: List[Tuple[int, int]], start: int, end: int) -> bool:
+    for span_start, span_end in spans:
+        if span_start <= start and end <= span_end:
+            return True
     return False
+
+
+def _is_inside_code(content: str, start: int, end: int) -> bool:
+    """True when [start, end) sits inside fenced, indented, or inline code."""
+    return _span_covers(_code_spans(content), start, end)
+
 
 def iter_wikilinks(content: str) -> Iterator[Tuple[str, str, bool]]:
     """Yield (target, label, is_inside_code) for every [[wikilink]] in content.
 
     Parses: [[target]], [[target|label]], [[target#anchor]], [[target#anchor|label]]
     Returns the resolved target (anchor stripped), the display label (or None),
-    and whether the link was inside a fenced/inline code block.
+    and whether the link was inside a fenced/indented/inline code block.
     """
+    spans = _code_spans(content)
     for m in _WIKILINK_RE.finditer(content):
         body = m.group(1).strip()
-        inside_code = _is_inside_code(content, m.start(), m.end())
+        inside_code = _span_covers(spans, m.start(), m.end())
         # Split alias: [[target|label]] or [[target#anchor|label]]
         if '|' in body:
             body, label = body.split('|', 1)
