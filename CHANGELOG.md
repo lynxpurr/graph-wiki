@@ -10,6 +10,10 @@
   - 新增 `linkrot_summary.empty_target_skipped` 计数；样本的位置与另两个豁免一致，
     出现在 `diagnosis` 的 D4d 条目 `evidence.samples` 里，不单独占 summary 字段；
   - `diagnosis` 里新增 D4d P2 条目披露豁免量，不静默丢弃。
+- **空目标样本保留原文写法。** 解析器在 yield 之前就 strip 并剥掉 `|label` / `#anchor`，
+  所以四种畸形写法（`[[   ]]`、`[[   |label]]`、`[[   #section]]`、`[[　]]`）
+  在样本里 `target` 全是 `""`，彼此无法区分。样本新增 `as_written` 字段保留原文，
+  `target` 与计数口径不变——只增加可定位性，不动任何判定。
 - **`[[]]`（空括号）本来就不是 wikilink**：解析正则要求 1 个以上非空白字符，它不进解析，
   也不计入任何豁免计数。两者在 diff 里难以区分，行为不同，已由测试固定。
 
