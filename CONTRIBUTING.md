@@ -21,6 +21,33 @@ python -m pip install pytest-cov
 python -m pytest tests/ --cov=scripts --cov-report=term-missing
 ```
 
+## Branch Model
+
+两条长命分支，都受保护；其余都是短命分支。
+
+| 分支 | 角色 | 规则 |
+|---|---|---|
+| `main` | 发布面。这里的每个提交要么是一次已发布的版本，要么是通往它的最后一步。 | 必须走 PR，7 项检查全绿，线性历史（squash），禁 force push，禁删除 |
+| `develop` | 集成分支。工作先落这里，攒够一次发布再往 `main` 走。 | 同上 |
+
+两条分支都开了 `enforce_admins`：管理员同样被规则约束。要临时解除保护，是一次显式 API 调用并留痕，不是日常操作。
+
+短命分支按意图命名——`feat/…`、`fix/…`、`docs/…`、`chore/…`——从 `develop` 切出：
+
+```
+develop ──┬── feat/x ──┐
+          └── fix/y  ──┴──► PR ──► develop ──► 发布 PR ──► main ──► tag
+```
+
+几条要点：
+
+- **`main` 与 `develop` 都不接受直推。** 两者都会拒绝——这是设计，不是障碍；绕过去等于放弃保护。
+- 工作先落 `develop`。发布是一次从 `develop` 到 `main` 的 PR，标签打在合并后的 `main` 提交上。
+- 热修也必须走分支和 PR。「就一行」恰恰是历史失去保护的方式。
+- 合并用 squash，所以 `main` 读起来是一串一次一条的变更。
+- 合并后删分支。留着的已合并分支迟早被误用，而且它会继续收到推送。
+- 必需检查项的名字改了，保护配置必须同步改——否则 PR 会永远停在 waiting，因为它在等一个不再存在的检查。
+
 ## Test Conventions
 
 - 所有测试使用仓库内置的合成数据（`examples/mini-*`），不依赖外部服务、网络或 wiki 目录。
@@ -34,6 +61,7 @@ python -m pytest tests/ --cov=scripts --cov-report=term-missing
 - [ ] 新增功能有对应测试
 - [ ] 不引入用户主目录、私有数据或密钥的硬编码依赖
 - [ ] CLI 输出与退出码保持向后兼容，或已在 changelog 中说明
+- [ ] PR 的目标分支是 `develop`（发布 PR 除外，那条目标是 `main`）
 - [ ] `claims` 块写的是**产物里真实存在的东西**，不是从代码里读出来的想象（CI 会核对）
 
 ## Verification Protocol
