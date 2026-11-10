@@ -32,6 +32,8 @@ python -m pytest tests/ --cov=scripts --cov-report=term-missing
 
 两条分支都开了 `enforce_admins`：管理员同样被规则约束。要临时解除保护，是一次显式 API 调用并留痕，不是日常操作。
 
+仓库的默认分支是 `develop`。所以 `gh pr create` 不带 `--base` 时会默认落在集成线；想把变更送进 `main`，必须显式写 `--base main`——这个额外动作是有意的，发布不该是顺手发生的。
+
 短命分支按意图命名——`feat/…`、`fix/…`、`docs/…`、`chore/…`——从 `develop` 切出：
 
 ```
