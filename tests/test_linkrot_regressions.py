@@ -362,3 +362,61 @@ def test_empty_target_as_written_reaches_disclosure(load_script_module, tmp_path
     assert found[0]["evidence"]["count"] == 1, found[0]
     samples = found[0]["evidence"]["samples"]
     assert samples and samples[0]["as_written"] == "   |label", samples
+
+def test_code_block_samples_carry_as_written(load_script_module, tmp_path):
+    """An empty form inside a fence is indistinguishable from the empty-target family.
+
+    Observed by an independent verifier: [[   ]] written inside a code fence counts
+    under code_block_exempt and its target still normalises to "". Giving as_written
+    only to the empty-target class therefore left a real ambiguity in a sibling
+    class, which is what the "the other classes carry content" claim assumed away.
+    """
+    root = tmp_path / "wiki"
+    _write(root, "a.md", "# a\n\n```md\n[[   ]]\n```\n")
+    diag = load_script_module("graph-diagnose.py")
+    result = diag.diagnose_linkrot(None, {}, wiki_root=str(root))
+
+    assert result["code_block_exempt"] == 1, result
+    assert result["total_broken"] == 0, result
+    sample = result["code_block_samples"][0]
+    assert sample["target"] == "", sample
+    assert sample["as_written"] == "   ", sample
+
+
+def test_skill_scheme_samples_carry_as_written(load_script_module, tmp_path):
+    """The scheme exemption is uniform with the other two, keys included."""
+    root = tmp_path / "wiki"
+    _write(root, "a.md", "# a\n\n[[skill:foo]]\n\n[[skills:bar]]\n")
+    diag = load_script_module("graph-diagnose.py")
+    result = diag.diagnose_linkrot(None, {}, wiki_root=str(root))
+
+    assert result["skill_scheme_exempt"] == 2, result
+    assert result["total_broken"] == 0, result
+    written = [s["as_written"] for s in result["skill_scheme_samples"]]
+    assert written == ["skill:foo", "skills:bar"], result["skill_scheme_samples"]
+
+
+def test_exempt_sample_key_sets_are_uniform(load_script_module, tmp_path):
+    """All three exemption classes expose the same sample keys, by construction.
+
+    Per-class key sets invite exactly the claim that broke last round: "this class
+    has no ambiguity". A single key set makes that claim unwritable.
+    """
+    root = tmp_path / "wiki"
+    _write(root, "a.md",
+           "# a\n\n[[   ]]\n\n```md\n[[  fenced  ]]\n```\n\n[[skill:foo]]\n")
+    diag = load_script_module("graph-diagnose.py")
+    result = diag.diagnose_linkrot(None, {}, wiki_root=str(root))
+
+    # Non-zero control: all three classes must actually produce samples, or the
+    # key-set comparison below is vacuous (an empty list trivially "matches").
+    for name in ("empty_target_samples", "code_block_samples", "skill_scheme_samples"):
+        assert result[name], (name, result)
+
+    key_sets = {name: {k for s in result[name] for k in s}
+                for name in ("empty_target_samples",
+                             "code_block_samples",
+                             "skill_scheme_samples")}
+    expected = {"source", "target", "as_written"}
+    for name, keys in key_sets.items():
+        assert keys == expected, (name, keys)

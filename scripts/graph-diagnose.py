@@ -460,6 +460,14 @@ def diagnose_linkrot(G, meta, wiki_root=None):
         source_paths[source_cid] = source_rel
         source_is_index = _is_index_slug(source_rel)
         for link_idx, (target_raw, _label, inside_code) in enumerate(iter_wikilinks(content)):
+            # Samples record what the author wrote, not the parsed husk:
+            # iter_wikilinks() strips the body and drops |label / #anchor before
+            # yielding, so every malformed shape arrives here as target="". Kept
+            # uniform across exemption classes on purpose - a per-class key set
+            # invites "the other classes carry content, so no ambiguity" claims,
+            # and those are false as soon as an empty form lands inside a fence.
+            as_written = (raw_bodies[link_idx]
+                          if link_idx < len(raw_bodies) else target_raw)
             if inside_code:
                 # Code-fenced links stay exempt from link-rot (a code sample is not
                 # a reference), but the exemption must be observable — dropping them
@@ -469,27 +477,31 @@ def diagnose_linkrot(G, meta, wiki_root=None):
                     # exemption still has to be observable, exactly like the fence one.
                     skill_scheme_exempt += 1
                     if len(skill_scheme_samples) < 20:
-                        skill_scheme_samples.append({'source': source_cid, 'target': target_raw})
+                        skill_scheme_samples.append({'source': source_cid,
+                                                     'target': target_raw,
+                                                     'as_written': as_written})
                 else:
                     code_block_exempt += 1
                     if len(code_block_samples) < 20:
-                        code_block_samples.append({'source': source_cid, 'target': target_raw})
+                        code_block_samples.append({'source': source_cid,
+                                                   'target': target_raw,
+                                                   'as_written': as_written})
                 continue
             if _is_skill_scheme(target_raw):
                 skill_scheme_exempt += 1
                 if len(skill_scheme_samples) < 20:
-                    skill_scheme_samples.append({'source': source_cid, 'target': target_raw})
+                    skill_scheme_samples.append({'source': source_cid,
+                                                 'target': target_raw,
+                                                 'as_written': as_written})
                 continue
             if not target_raw.strip():
-                # An empty or whitespace-only target (`[[   ]]`) is a malformed
+                # An empty or whitespace-only target ([[   ]]) is a malformed
                 # link, not a reference to a page that does not exist. Counting it
                 # as link-rot inflated the headline number with something no author
                 # can act on as a "missing page". It stays exempt, but observably so
                 # — same rule as the fence (#6) and scheme (#10) exemptions.
                 empty_target_skipped += 1
                 if len(empty_target_samples) < 20:
-                    as_written = (raw_bodies[link_idx]
-                                  if link_idx < len(raw_bodies) else target_raw)
                     empty_target_samples.append({'source': source_cid,
                                                  'target': target_raw,
                                                  'as_written': as_written})
