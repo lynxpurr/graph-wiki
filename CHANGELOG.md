@@ -40,6 +40,22 @@
 6 条新回归（共 248 passed）：`~~~` 围栏、4 空格缩进块、未闭合围栏、
 列表续行**不是**代码（非零对照，防漏报）、段落续行不是代码、行内代码无回归。
 
+### Gate
+
+**documented-scores 门禁对代码区不敏感，已按计数器补齐。** 它比对的是聚合总分，
+而豁免面变化不上浮到总分：同一份含代码区死链的语料，旧实现 `total_broken=2` / `code_block_exempt=1`，
+新实现 `0` / `3`，总分都是 `79/120`。
+
+补法两件：
+
+- `examples/mini-wiki/concepts/algorithms.md` 的「Pseudocode is a quotation」一节补三段代码区内的 wikilink
+  （`~~~` 围栏、4 空格缩进块、行内代码各一条）+ 一条真实链接；
+- CI 增 `documented link-rot counters` 一步，断言示例语料的 `total_broken=0`、`unique_broken=0`、
+  `code_block_exempt=3`。非零对照：换回旧实现这三项变 `2/2/1`，该步判红。
+
+四条 documented 聚合分数**未变**（`79/120`、`85/130`、`100.14/130`、`113.61/140`）——语料加在既有页内，
+没有新增节点，所以只动计数器不动聚合分。
+
 ## Unreleased — empty wikilink targets are a malformed link, not link-rot
 
 ### Changed
