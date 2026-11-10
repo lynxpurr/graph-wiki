@@ -130,6 +130,37 @@ cd /path/to/your/wiki
 
 也就是说：**没有分级数据时，周检一律判「未通过」而不是「未退化」**——但会区分「确实是零」与「说不清楚」。
 
+### `linkrot_summary` 字段语义
+
+`graph-diagnose --json` 的 `linkrot_summary` 里，三个计数**不是同一个口径**，读之前先看这张表：
+
+| 字段 | 含义 |
+|------|------|
+| `total_broken` | **原始引用次数**（raw wikilink references），不是去重后的工作项 |
+| `unique_broken` | 去重后的 **`(source, target)` 条目数**——不是不同的坏目标页面数 |
+| `duplicated_entries` | 被合并掉的引用数 = `sum(occurrences - 1)` |
+| `entries_with_duplicates` | `occurrences > 1` 的条目数 |
+
+恒等式恒成立，可直接当自检用：
+
+```
+total_broken == unique_broken + duplicated_entries
+```
+
+**`unique_broken` 最容易读错。** 同一个缺失页面被两个页面引用，会算成 **2**，而不是 1——因为去重键是 `(source, target)` 而不是 `target`：修 A 页的 `[[gone]]` 和修 B 页的 `[[gone]]` 是两个独立动作。
+
+**豁免项一律可观测，不静默丢弃。** 三种链接按设计不计入死链，但各自留计数：
+
+| 字段 | 豁免理由 |
+|------|---------|
+| `code_block_exempt` | 代码围栏 / 行内代码内的 wikilink——代码示例不是引用 |
+| `skill_scheme_exempt` | `skill:` / `skills:` 前缀——不是页面链接 |
+| `empty_target_skipped` | 空或全空白的 `[[   ]]` 目标——**写残的链接，不是指向缺失页面** |
+
+每个豁免量同时以 P2 条目出现在 `diagnosis` 里，附带样本，避免「豁免」变成「静默消失」。
+
+注意正则口径：`[[ ]]` 至少要有一个非空白字符才会被解析成 wikilink，所以`[[]]`（空括号）根本不进解析、也不计入 `empty_target_skipped`；`[[   ]]`（空格）会进解析然后被豁免计数。两者在 diff 里长得一样，行为不同。
+
 ### weekly-health-check.py 退出码（行为变更）
 
 周检现在会按判定结果设置退出码，cron / CI 直接读 `$?` 即可，不必再 grep 文本：

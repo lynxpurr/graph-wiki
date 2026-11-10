@@ -392,6 +392,8 @@ def diagnose_linkrot(G, meta, wiki_root=None):
     code_block_samples = []
     skill_scheme_exempt = 0  # skill:/skills: prefixed wikilinks, issue #10
     skill_scheme_samples = []
+    empty_target_skipped = 0  # malformed [[   ]] targets, not missing pages
+    empty_target_samples = []
     source_paths = {}       # canonical id -> unfolded relative path, issue #9
 
     # Discover all markdown files and build canonical ID set
@@ -471,6 +473,16 @@ def diagnose_linkrot(G, meta, wiki_root=None):
                 if len(skill_scheme_samples) < 20:
                     skill_scheme_samples.append({'source': source_cid, 'target': target_raw})
                 continue
+            if not target_raw.strip():
+                # An empty or whitespace-only target (`[[   ]]`) is a malformed
+                # link, not a reference to a page that does not exist. Counting it
+                # as link-rot inflated the headline number with something no author
+                # can act on as a "missing page". It stays exempt, but observably so
+                # — same rule as the fence (#6) and scheme (#10) exemptions.
+                empty_target_skipped += 1
+                if len(empty_target_samples) < 20:
+                    empty_target_samples.append({'source': source_cid, 'target': target_raw})
+                continue
             target = target_raw
             if target.startswith('../'):
                 rel = os.path.relpath(path, wiki_root)
@@ -529,6 +541,8 @@ def diagnose_linkrot(G, meta, wiki_root=None):
         'code_block_samples': code_block_samples,
         'skill_scheme_exempt': skill_scheme_exempt,
         'skill_scheme_samples': skill_scheme_samples,
+        'empty_target_skipped': empty_target_skipped,
+        'empty_target_samples': empty_target_samples,
     }
 
 
@@ -1062,9 +1076,12 @@ def json_output(G, de, iso, spo, sd, rec, lr, st, full=False, source="wiki",
             'affected_sources': lr.get('affected_sources', 0),
             'code_block_exempt': lr.get('code_block_exempt', 0),
             'skill_scheme_exempt': lr.get('skill_scheme_exempt', 0),
+            'empty_target_skipped': lr.get('empty_target_skipped', 0),
             'dedupe_key': '(source, target)',
             'duplicated_entries_meaning': 'references merged away = sum(occurrences - 1)',
             'total_broken_meaning': 'raw wikilink references, not deduped work items',
+            'unique_broken_meaning': 'distinct (source, target) pairs, NOT distinct target pages — the same missing page linked from two sources counts twice',
+            'empty_target_skipped_meaning': 'whitespace-only [[   ]] targets, exempt: a malformed link is not a missing page',
             'identity': 'total_broken == unique_broken + duplicated_entries',
         },
         'multi_source': multi_source or {
@@ -1193,6 +1210,25 @@ def _diagnosis_to_array(de, iso, spo, sd, rec, lr, st, full,
             'evidence': {
                 'count': lr.get('skill_scheme_exempt'),
                 'samples': lr.get('skill_scheme_samples', []),
+            },
+        })
+    # D4d: whitespace-only targets (`[[   ]]`) — a malformed link, not a missing
+    # page, so it is exempt from link-rot. Same disclosure standard as D4b/D4c:
+    # the exemption must be visible, never a silent drop.
+    if lr.get('empty_target_skipped'):
+        items.append({
+            'dimension': 'D4',
+            'title': f"空目标链接未计入死链: {lr.get('empty_target_skipped')} 处",
+            'severity': 'P2',
+            'task_type': 'docs',
+            'auto_queue': False,
+            'recommendation': (
+                '空或全空白的 [[ ]] 目标是写残的链接，不是指向缺失页面，已按豁免处理；'
+                '此处仅披露豁免量，请补全目标或删除该链接'
+            ),
+            'evidence': {
+                'count': lr.get('empty_target_skipped'),
+                'samples': lr.get('empty_target_samples', []),
             },
         })
     # D5: Seed Diffusion

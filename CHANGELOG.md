@@ -1,5 +1,29 @@
 # Changelog
 
+## Unreleased — empty wikilink targets are a malformed link, not link-rot
+
+### Changed
+
+- **`[[   ]]`（空白目标）不再计入死链。** 之前它被当作「指向不存在页面」记进 `total_broken`，
+  产生一条 `README -> ""` 的 D4 条目——一个作者无法按「缺失页面」去修的东西。现在按豁免处理，
+  与代码围栏（#6）、`skill:` 前缀（#10）同一标准：**豁免但必须可观测**。
+  - 新增 `linkrot_summary.empty_target_skipped` 计数与 `empty_target_samples` 样本；
+  - `diagnosis` 里新增 D4d P2 条目披露豁免量，不静默丢弃。
+- **`[[]]`（空括号）本来就不是 wikilink**：解析正则要求 1 个以上非空白字符，它不进解析，
+  也不计入任何豁免计数。两者在 diff 里难以区分，行为不同，已由测试固定。
+
+### Documented
+
+- `linkrot_summary` 新增 `unique_broken_meaning` 与 `empty_target_skipped_meaning` 两个
+  自述字段，并在 README 补一节字段语义：**`unique_broken` 是 `(source, target)` 条目数，
+  不是不同的坏目标页面数**——同一个缺失页面被两个页面引用会算 2。此前只能靠 `dedupe_key`
+  反推，容易读成「多少个坏页面」。
+
+### Why
+
+来自一次独立测试：外部测试方在真实 wiki 上注入空目标，观察到 `total_broken` 从 3 涨到 4，
+且 `unique_broken` 的语义无法从输出自证。两条都不是崩溃级缺陷，是「数字看着对、含义得追问」。
+
 ## Unreleased — pre-push privacy gate
 
 ### Added
