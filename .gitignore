@@ -22,3 +22,6 @@ data/*.jsonl
 memory/
 *_private*
 *_confidential*
+
+# Scratch work areas: throwaway outputs, logs, and local absolute paths
+.scratch/
