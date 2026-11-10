@@ -159,6 +159,23 @@ total_broken == unique_broken + duplicated_entries
 
 每个豁免量同时以 P2 条目出现在 `diagnosis` 里，附带样本，避免「豁免」变成「静默消失」。
 
+**扫描面**：只有**非隐藏目录**下的 `.md` 参与图构建——目录遍历排除了 `.` 开头的目录
+（`.obsidian/`、`.githooks/`、`.backup-*/` 等）与 `node_modules/`。所以一处链接是否计入死链，
+取决于它所在目录是否在扫描面内：`.githooks/README.md` 里同样的 4 空格缩进块，单独当 wiki-root
+跑是 5 条 `code_block_exempt`，放进整库跑则是 0 条——它压根不参与扫描。跨版本比计数前，
+先确认两次的目录结构一致。
+
+**「4 空格缩进 = 代码块」不能泛化。** CommonMark 规定**缩进代码块不能打断段落**：
+段落中缩进 4 列的行只是该段落的延续，仍是正文，里面的链接照常检查。
+只有「前面有空行、不与上一段相连」的缩进才构成缩进代码块。同一个 4 空格，两种上下文两种结果：
+
+```
+    [[ind-blank]]          ← 前有空行：缩进代码块，豁免（code_block_exempt=1）
+
+prose line
+    [[ind-para]]           ← 段落续行：仍是正文，计死链（total_broken=1）
+```
+
 三类豁免的样本**统一三格**：`source`、`target`、`as_written`。
 
 `target` 是解析后的目标（空目标一律归一成 `""`）。

@@ -29,6 +29,11 @@
   并计入 `empty_target_skipped`，应为「至少要有一个字符」。
 - README 补一句：空目标类按**解析后** `target` 判定，`[[#section]]` 这类同页锚点剥掉锚点后
   也是空串、同样落这一类；样本的 `as_written` 可区分二者。
+- README 补**扫描面**口径：只有非隐藏目录下的 `.md` 参与图构建（`.obsidian/`、`.githooks/`、
+  `.backup-*/`、`node_modules/` 被排除）。`.githooks/README.md` 单独当 wiki-root 跑是 5 条
+  `code_block_exempt`，放进整库跑是 0 条——它不参与扫描。跨版本比计数前先确认目录结构一致。
+- README 补**「4 空格缩进 = 代码块」的适用边界**：CommonMark 规定缩进代码块不能打断段落，
+  段落中缩进 4 列的行是段落延续、仍是正文。`    [[x]]` 前有空行 → 豁免；接在段落后面 → 计死链。
 
 ### Test
 
