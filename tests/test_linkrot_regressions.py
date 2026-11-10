@@ -319,3 +319,46 @@ def test_linkrot_summary_documents_unique_broken_semantics(load_script_module):
     src = Path(diag.__file__).read_text(encoding="utf-8")
     assert "unique_broken_meaning" in src
     assert "(source, target) pairs" in src
+
+
+def test_empty_target_samples_keep_as_written_shape(load_script_module, tmp_path):
+    """Samples must record what the author wrote, not the parsed husk.
+
+    Observed by an independent verifier: iter_wikilinks() strips the body and
+    drops |label / #anchor before yielding, so every malformed shape reaches the
+    sample as target="". A sample reading {"target": ""} does not tell anyone
+    which link to go fix, which defeats the point of exempting observably -
+    a count that cannot be located is only marginally better than a silent drop.
+    """
+    root = tmp_path / "wiki"
+    _write(root, "a.md",
+           "# a\n\n[[   ]]\n\n[[   |label]]\n\n[[   #section]]\n\n[[\u3000]]\n")
+    diag = load_script_module("graph-diagnose.py")
+    result = diag.diagnose_linkrot(None, {}, wiki_root=str(root))
+
+    # Counted as exempt, not as link-rot: neither number may move.
+    assert result["empty_target_skipped"] == 4, result
+    assert result["total_broken"] == 0, result
+
+    samples = result["empty_target_samples"]
+    assert len(samples) == 4, samples
+    # The parsed target is the same husk for all four ...
+    assert {s["target"] for s in samples} == {""}, samples
+    # ... but the shape as written survives, so the four are distinguishable.
+    assert {s["as_written"] for s in samples} == {
+        "   ", "   |label", "   #section", "\u3000"
+    }, samples
+
+
+def test_empty_target_as_written_reaches_disclosure(load_script_module, tmp_path):
+    """The P2 disclosure carries the shape too, not just the internal counter."""
+    root = tmp_path / "wiki"
+    _write(root, "a.md", "# a\n\n[[   |label]]\n")
+    diag = load_script_module("graph-diagnose.py")
+    result = diag.diagnose_linkrot(None, {}, wiki_root=str(root))
+    items = diag._diagnosis_to_array({}, {}, {}, {}, {}, result, {}, False)
+    found = [i for i in items if "\u7a7a\u76ee\u6807\u94fe\u63a5\u672a\u8ba1\u5165\u6b7b\u94fe" in i["title"]]
+    assert len(found) == 1, items
+    assert found[0]["evidence"]["count"] == 1, found[0]
+    samples = found[0]["evidence"]["samples"]
+    assert samples and samples[0]["as_written"] == "   |label", samples

@@ -159,6 +159,10 @@ total_broken == unique_broken + duplicated_entries
 
 每个豁免量同时以 P2 条目出现在 `diagnosis` 里，附带样本，避免「豁免」变成「静默消失」。
 
+样本有三格：`source`（来源页）、`target`（解析后的目标——空目标一律归一成 `""`）、`as_written`（**作者实际写的形态**，保留 `|label`、`#anchor` 与全角空格）。
+加 `as_written` 的原因很实在：解析器在 yield 之前就剥掉了标签和锚点，所以 `[[   ]]`、`[[   |label]]`、`[[   #section]]`、`[[　]]` 四种写法走到样本里 `target` 全是 `""`。只给一个空串，等于告诉人「有一处写残了，自己找去」——
+一个定位不到的计数，只比静默丢弃好一点。
+
 注意正则口径：`[[ ]]` 至少要有一个非空白字符才会被解析成 wikilink，所以`[[]]`（空括号）根本不进解析、也不计入 `empty_target_skipped`；`[[   ]]`（空格）会进解析然后被豁免计数。两者在 diff 里长得一样，行为不同。
 
 ### weekly-health-check.py 退出码（行为变更）

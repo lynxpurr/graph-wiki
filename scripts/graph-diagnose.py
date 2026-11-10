@@ -27,7 +27,8 @@ from collections import defaultdict, Counter
 from datetime import datetime
 
 import networkx as nx
-from graph_loader import build_graph, iter_wikilinks, _canonical_id, normalize_sources
+from graph_loader import (build_graph, iter_wikilinks, _canonical_id,
+                          normalize_sources, _WIKILINK_RE)
 from utils import atomic_append_jsonl, atomic_write
 import sys as _sys
 _sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -445,6 +446,12 @@ def diagnose_linkrot(G, meta, wiki_root=None):
     for path in md_files:
         source_cid = _canonical_id(path, wiki_root)
         content = open(path, encoding='utf-8').read()
+        # Raw inner text of every wikilink in this file, in parse order. iter_wikilinks()
+        # strips the body and drops |label / #anchor before yielding, so all three
+        # malformed empty-target shapes arrive as "". A sample of target="" then cannot
+        # tell [[   |label]] from [[   #section]] from a full-width space. Re-scanning with
+        # the same regex keeps counts untouched and only adds fidelity to the payload.
+        raw_bodies = [m.group(1) for m in _WIKILINK_RE.finditer(content)]
         # Issue #9: index-ness must be decided from the UNFOLDED path. _canonical_id()
         # collapses dir/index.md to dir, so feeding it back to _is_index_slug() tested
         # 'incidents' (starts with 'incid', not 'index') and silently failed, making
@@ -452,7 +459,7 @@ def diagnose_linkrot(G, meta, wiki_root=None):
         source_rel = os.path.relpath(path, wiki_root).replace(os.sep, '/')
         source_paths[source_cid] = source_rel
         source_is_index = _is_index_slug(source_rel)
-        for target_raw, _label, inside_code in iter_wikilinks(content):
+        for link_idx, (target_raw, _label, inside_code) in enumerate(iter_wikilinks(content)):
             if inside_code:
                 # Code-fenced links stay exempt from link-rot (a code sample is not
                 # a reference), but the exemption must be observable — dropping them
@@ -481,7 +488,11 @@ def diagnose_linkrot(G, meta, wiki_root=None):
                 # — same rule as the fence (#6) and scheme (#10) exemptions.
                 empty_target_skipped += 1
                 if len(empty_target_samples) < 20:
-                    empty_target_samples.append({'source': source_cid, 'target': target_raw})
+                    as_written = (raw_bodies[link_idx]
+                                  if link_idx < len(raw_bodies) else target_raw)
+                    empty_target_samples.append({'source': source_cid,
+                                                 'target': target_raw,
+                                                 'as_written': as_written})
                 continue
             target = target_raw
             if target.startswith('../'):
