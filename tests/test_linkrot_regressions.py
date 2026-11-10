@@ -246,3 +246,76 @@ def test_skill_scheme_inside_code_block_counted_once(load_script_module, tmp_pat
     assert result["skill_scheme_exempt"] == 1, result
     assert result["code_block_exempt"] == 1, result
     assert result["total_broken"] == 0, result
+
+
+def test_whitespace_only_target_is_exempt_not_linkrot(load_script_module, tmp_path):
+    """A whitespace-only target is a malformed link, not a missing page.
+
+    Found by an independent tester: injecting "[[" + spaces + "]]" into a page
+    raised total_broken from 3 to 4, reporting "README -> ''" as link-rot.
+    Nothing an author can act on as a page that does not exist. Exempt, but
+    counted, same standard as the fence (#6) and scheme (#10) exemptions.
+    """
+    root = tmp_path / "wiki"
+    _write(root, "a.md", "# a\n\n[[   ]]\n")
+    diag = load_script_module("graph-diagnose.py")
+    result = diag.diagnose_linkrot(None, {}, wiki_root=str(root))
+    assert result["total_broken"] == 0, result
+    assert result["unique_broken"] == 0, result
+    assert result["empty_target_skipped"] == 1, result
+    assert result["empty_target_samples"][0]["source"] == "a"
+
+
+def test_empty_brackets_are_not_wikilinks_at_all(load_script_module, tmp_path):
+    """A bare "[[]]" never reaches the parser: the wikilink regex needs 1+ chars.
+
+    Pinned because the two forms look alike in a diff but behave differently:
+    "[[" + spaces + "]]" is parsed and then exempted (1 skip), "[[]]" is not a
+    wikilink at all (0). Reading only the counts, this looked like "two empty
+    targets merged into one" when in fact only one was ever a link.
+    """
+    root = tmp_path / "wiki"
+    _write(root, "a.md", "# a\n\n[[]]\n")
+    diag = load_script_module("graph-diagnose.py")
+    result = diag.diagnose_linkrot(None, {}, wiki_root=str(root))
+    assert result["total_broken"] == 0, result
+    assert result["empty_target_skipped"] == 0, result
+
+
+def test_empty_target_exemption_does_not_swallow_real_dead_links(load_script_module, tmp_path):
+    """Exempting malformed links must not hide a genuine missing page beside them."""
+    root = tmp_path / "wiki"
+    _write(root, "a.md", "# a\n\n[[   ]]\n\n[[gone-page]]\n")
+    diag = load_script_module("graph-diagnose.py")
+    result = diag.diagnose_linkrot(None, {}, wiki_root=str(root))
+    assert result["empty_target_skipped"] == 1, result
+    assert result["total_broken"] == 1, result
+    assert result["unique_broken"] == 1, result
+    assert result["details"][0]["broken_targets"][0]["target"] == "gone-page"
+
+
+def test_empty_target_exemption_surfaces_as_p2(load_script_module, tmp_path):
+    """Disclosure path: an exempted malformed link still shows up in diagnosis."""
+    root = tmp_path / "wiki"
+    _write(root, "a.md", "# a\n\n[[   ]]\n")
+    diag = load_script_module("graph-diagnose.py")
+    result = diag.diagnose_linkrot(None, {}, wiki_root=str(root))
+    items = diag._diagnosis_to_array({}, {}, {}, {}, {}, result, {}, False)
+    found = [i for i in items if "空目标链接未计入死链" in i["title"]]
+    assert len(found) == 1, items
+    assert found[0]["severity"] == "P2", found
+    assert found[0]["evidence"]["count"] == 1
+    assert not [i for i in items if i["severity"] == "P0"], items
+
+
+def test_linkrot_summary_documents_unique_broken_semantics(load_script_module):
+    """unique_broken counts (source, target) pairs, not distinct target pages.
+
+    Observed on a real wiki: one missing page linked from two sources yields
+    unique_broken=2. Callers read "unique" as "how many bad pages", so the JSON
+    has to state which one it is instead of leaving it to the dedupe_key hint.
+    """
+    diag = load_script_module("graph-diagnose.py")
+    src = Path(diag.__file__).read_text(encoding="utf-8")
+    assert "unique_broken_meaning" in src
+    assert "(source, target) pairs" in src
