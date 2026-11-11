@@ -170,8 +170,10 @@ total_broken == unique_broken + duplicated_entries
 
 **扫描面**：只有**非隐藏目录**下的 `.md` 参与图构建——目录遍历排除了 `.` 开头的目录
 （`.obsidian/`、`.githooks/`、`.backup-*/` 等）与 `node_modules/`。所以一处链接是否计入死链，
-取决于它所在目录是否在扫描面内：`.githooks/README.md` 里同样的 4 空格缩进块，单独当 wiki-root
-跑是 5 条 `code_block_exempt`，放进整库跑则是 0 条——它压根不参与扫描。跨版本比计数前，
+取决于它所在目录是否在扫描面内：一份含 5 条 4 空格缩进代码区链接的 `.md`，放进 `.githooks/`
+这类隐藏目录后把它**所在目录**当 wiki-root 跑，得 `code_block_exempt=5`；从父目录跑则它在
+扫描面之外——若隐藏目录是该 root 下唯一的内容，会直接报 `ERROR: No wiki pages found`，
+而不是报 0 条计数。跨版本比计数前，
 先确认两次的目录结构一致。
 
 **「4 空格缩进 = 代码块」不能泛化。** CommonMark 规定**缩进代码块不能打断段落**：
