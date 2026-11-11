@@ -51,6 +51,22 @@ develop ──┬── feat/x ──┐
 - 合并后删分支。留着的已合并分支迟早被误用，而且它会继续收到推送。
 - 必需检查项的名字改了，保护配置必须同步改——否则 PR 会永远停在 waiting，因为它在等一个不再存在的检查。
 
+## Syncing documented scores
+
+`security.yml` asserts four literal scores from the test suite and the link-rot counters; `README.md` repeats them in prose. Any change under `examples/` moves them, so a corpus change is not finished until every number is re-derived from a real run:
+
+```bash
+.venv/bin/python scripts/graph-test-suite.py --source wiki --wiki-root examples/mini-wiki --json
+.venv/bin/python scripts/graph-test-suite.py --source ontology --ontology-path examples/mini-ontology.jsonl --json
+.venv/bin/python scripts/graph-test-suite.py --source wiki,ontology --wiki-root examples/mini-wiki --ontology-path examples/mini-ontology.jsonl --json
+.venv/bin/python scripts/graph-test-suite.py --source wiki,ontology,ragflow --wiki-root examples/mini-wiki --ontology-path examples/mini-ontology.jsonl --ragflow-path examples/mini-ragflow.jsonl --json
+.venv/bin/python scripts/graph-diagnose.py --source wiki --wiki-root examples/mini-wiki --json   # linkrot_summary
+```
+
+Update only the constants that actually moved. A group whose value did not change is correct, not an oversight: adding one concept page in 2026-11 moved the three-source score (113.61 → 111.61) and `code_block_exempt` (3 → 6) while leaving `79/120`, `85/130` and `100.14/130` untouched. Replacing every occurrence mechanically is a smell — some of them are historical narration about the old line-scanning implementation, not current assertions.
+
+Claims blocks stay honest by staying narrow: `scripts/verify-claims.py` runs the diagnosis against `tests/fixtures/claims-wiki`, **not** against the corpus you edited. So a claim asserts a tool contract (a path resolves, a value holds on the fixture), never the corpus numbers you just changed — those are already pinned by the documented-score checks.
+
 ## Test Conventions
 
 - 所有测试使用仓库内置的合成数据（`examples/mini-*`），不依赖外部服务、网络或 wiki 目录。
