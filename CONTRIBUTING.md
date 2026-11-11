@@ -27,7 +27,7 @@ python -m pytest tests/ --cov=scripts --cov-report=term-missing
 
 | 分支 | 角色 | 规则 |
 |---|---|---|
-| `main` | 发布面。这里的每个提交要么是一次已发布的版本，要么是通往它的最后一步。 | 必须走 PR，7 项检查全绿，禁 force push，禁删除 |
+| `main` | 发布面。只由发布 PR 与回合并写入；标签打在发布提交上。 | 必须走 PR，7 项检查全绿，禁 force push，禁删除 |
 | `develop` | 集成分支。工作先落这里，攒够一次发布再往 `main` 走。 | 同上 |
 
 两条分支都开了 `enforce_admins`：管理员同样被规则约束。要临时解除保护，是一次显式 API 调用并留痕，不是日常操作。
