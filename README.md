@@ -161,7 +161,8 @@ total_broken == unique_broken + duplicated_entries
 
 **示例语料覆盖三个豁免面，门禁断言的是计数器而不是总分。** `examples/mini-wiki/concepts/algorithms.md`
 的「Pseudocode is a quotation」一节放了三段代码区内的 wikilink（``` 围栏、4 空格缩进块、行内代码各一条）
-与一条真实链接：跑 `--source wiki` 得 `code_block_exempt=3`、`total_broken=0`。
+与一条真实链接；`concepts/code-regions.md` 再按这三种形态各补一条示例链接，
+跑 `--source wiki` 得 `code_block_exempt=6`、`total_broken=0`。
 
 总分对这类差异**完全不敏感**——同一份语料在旧的行扫描实现上是 `total_broken=2` / `code_block_exempt=1`，
 而聚合分数一字不差（`79/120`）。所以 CI 断言的是这两个计数器：只有它们能拦住「代码区判定回归」
@@ -302,7 +303,7 @@ $(git rev-parse --git-dir)/privacy-patterns.local   # 每行一个扩展正则
 | `ontology` | 12（D1-D11 + 实体类型多样性） | **130** |
 | `wiki,ontology,ragflow` | 13（再加 `ragflow_coverage`） | **140** |
 
-bonus = `round((覆盖率 + 一致性 + 信息增益) / 3)`，上限 10 分；即使只拿到部分 bonus，分母仍按 +10 计入，因此两源示例的总分行是 `100.14/130`（而不是 `/120`），三源示例是 `113.61/140`。
+bonus = `round((覆盖率 + 一致性 + 信息增益) / 3)`，上限 10 分；即使只拿到部分 bonus，分母仍按 +10 计入，因此两源示例的总分行是 `100.14/130`（而不是 `/120`），三源示例是 `111.61/140`。
 
 ### 环境变量
 
