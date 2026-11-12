@@ -3,20 +3,53 @@
 
 from __future__ import annotations
 
-import fcntl
 import json
 import os
 import stat
 import tempfile
 from typing import Any
 
+try:
+    import fcntl
+except ImportError:
+    fcntl = None  # type: ignore
+
+try:
+    import msvcrt
+except ImportError:
+    msvcrt = None  # type: ignore
+
 
 def _fsync_directory(directory: str) -> None:
+    if os.name == "nt":
+        return
     dir_fd = os.open(directory, os.O_RDONLY)
     try:
         os.fsync(dir_fd)
     finally:
         os.close(dir_fd)
+
+
+def _lock_file(fd: int, nbytes: int = 1) -> None:
+    if fcntl is not None:
+        fcntl.flock(fd, fcntl.LOCK_EX)
+    elif msvcrt is not None:
+        try:
+            os.lseek(fd, 0, os.SEEK_SET)
+            msvcrt.locking(fd, msvcrt.LK_LOCK, nbytes)
+        except OSError:
+            pass
+
+
+def _unlock_file(fd: int, nbytes: int = 1) -> None:
+    if fcntl is not None:
+        fcntl.flock(fd, fcntl.LOCK_UN)
+    elif msvcrt is not None:
+        try:
+            os.lseek(fd, 0, os.SEEK_SET)
+            msvcrt.locking(fd, msvcrt.LK_UNLCK, nbytes)
+        except OSError:
+            pass
 
 
 def atomic_write(path: str | os.PathLike[str], content: str | bytes) -> str:
@@ -65,7 +98,7 @@ def atomic_append_jsonl(path: str | os.PathLike[str], line_dict: dict[str, Any])
 
     fd = os.open(target, os.O_WRONLY | os.O_CREAT | os.O_APPEND, 0o600)
     try:
-        fcntl.flock(fd, fcntl.LOCK_EX)
+        _lock_file(fd)
         view = memoryview(encoded)
         while view:
             written = os.write(fd, view)
@@ -73,8 +106,9 @@ def atomic_append_jsonl(path: str | os.PathLike[str], line_dict: dict[str, Any])
         os.fsync(fd)
     finally:
         try:
-            fcntl.flock(fd, fcntl.LOCK_UN)
+            _unlock_file(fd)
         finally:
             os.close(fd)
     _fsync_directory(directory)
     return target
+
