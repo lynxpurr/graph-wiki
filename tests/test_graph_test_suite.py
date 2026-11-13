@@ -84,3 +84,65 @@ def test_t5_reciprocity_between_35_and_50_is_acceptable():
     assert score == 8
     assert "40.0%" in detail
     assert "回音室风险" not in detail
+
+
+def test_streams_share_destination_handles_zero_inode_and_same_stream(monkeypatch):
+    suite = _load_graph_test_suite()
+
+    class FakeStat:
+        def __init__(self, st_dev: int, st_ino: int):
+            self.st_dev = st_dev
+            self.st_ino = st_ino
+
+    class FakeStream:
+        def __init__(self, fileno_val: int):
+            self._fileno = fileno_val
+
+        def fileno(self) -> int:
+            return self._fileno
+
+    # Identical object
+    s1 = FakeStream(1)
+    assert suite._streams_share_destination(s1, s1) is True
+
+    # Same fileno
+    s2 = FakeStream(1)
+    assert suite._streams_share_destination(s1, s2) is True
+
+    orig_fstat = suite.os.fstat
+    fake_map = {}
+
+    def mock_fstat(fd):
+        if fd in fake_map:
+            return fake_map[fd]
+        return orig_fstat(fd)
+
+    monkeypatch.setattr(suite.os, "fstat", mock_fstat)
+
+    # Different fileno, both st_ino == 0 (e.g. Windows pipes or devices)
+    # Must NOT report as sharing destination!
+    fake_map[101] = FakeStat(0, 0)
+    fake_map[102] = FakeStat(0, 0)
+    assert suite._streams_share_destination(FakeStream(101), FakeStream(102)) is False
+
+    # Different fileno, one st_ino == 0
+    fake_map[101] = FakeStat(1, 0)
+    fake_map[102] = FakeStat(1, 123)
+    assert suite._streams_share_destination(FakeStream(101), FakeStream(102)) is False
+
+    # Different fileno, different non-zero inodes
+    fake_map[101] = FakeStat(1, 100)
+    fake_map[102] = FakeStat(1, 101)
+    assert suite._streams_share_destination(FakeStream(101), FakeStream(102)) is False
+
+    # Different fileno, same dev and same non-zero inode (e.g. 2>&1 on POSIX)
+    fake_map[101] = FakeStat(1, 500)
+    fake_map[102] = FakeStat(1, 500)
+    assert suite._streams_share_destination(FakeStream(101), FakeStream(102)) is True
+
+    # Stream raising OSError or missing fileno
+    class BadStream:
+        pass
+
+    assert suite._streams_share_destination(BadStream(), BadStream()) is False
+

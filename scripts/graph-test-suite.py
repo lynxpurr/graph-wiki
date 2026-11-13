@@ -69,10 +69,18 @@ RAGFLOW_COVERAGE = None
 
 def _streams_share_destination(first, second):
     """Return whether two file objects point at the same pipe or file."""
+    if first is second:
+        return True
     try:
-        first_stat = os.fstat(first.fileno())
-        second_stat = os.fstat(second.fileno())
+        first_fileno = first.fileno()
+        second_fileno = second.fileno()
+        if first_fileno == second_fileno:
+            return True
+        first_stat = os.fstat(first_fileno)
+        second_stat = os.fstat(second_fileno)
     except (AttributeError, OSError):
+        return False
+    if first_stat.st_ino == 0 or second_stat.st_ino == 0:
         return False
     return (
         first_stat.st_dev == second_stat.st_dev
