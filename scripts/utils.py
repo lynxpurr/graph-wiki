@@ -8,6 +8,7 @@ import os
 import stat
 import tempfile
 from typing import Any
+import warnings
 
 try:
     import fcntl
@@ -37,8 +38,18 @@ def _lock_file(fd: int, nbytes: int = 1) -> None:
         try:
             os.lseek(fd, 0, os.SEEK_SET)
             msvcrt.locking(fd, msvcrt.LK_LOCK, nbytes)
-        except OSError:
-            pass
+        except OSError as exc:
+            warnings.warn(
+                f"atomic_append_jsonl: file locking unavailable on descriptor {fd} ({exc}); proceeding unlocked",
+                RuntimeWarning,
+                stacklevel=2,
+            )
+    else:
+        warnings.warn(
+            "atomic_append_jsonl: no platform file locking mechanism available; proceeding unlocked",
+            RuntimeWarning,
+            stacklevel=2,
+        )
 
 
 def _unlock_file(fd: int, nbytes: int = 1) -> None:

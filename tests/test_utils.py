@@ -106,7 +106,7 @@ def test_lock_and_unlock_file_with_mock_msvcrt(monkeypatch):
     assert fake.calls == [(10, fake.LK_LOCK, 1), (10, fake.LK_UNLCK, 1)]
 
 
-def test_lock_and_unlock_file_handles_oserror(monkeypatch):
+def test_lock_file_warns_on_locking_oserror(monkeypatch):
     class FailingMsvcrt:
         def __init__(self):
             self.LK_LOCK = 1
@@ -119,6 +119,14 @@ def test_lock_and_unlock_file_handles_oserror(monkeypatch):
     monkeypatch.setattr(utils, "msvcrt", FailingMsvcrt())
     monkeypatch.setattr(os, "lseek", lambda fd, pos, how: 0)
 
-    # Must swallow OSError gracefully
-    utils._lock_file(10, 1)
+    with pytest.warns(RuntimeWarning, match="file locking unavailable on descriptor 10"):
+        utils._lock_file(10, 1)
     utils._unlock_file(10, 1)
+
+
+def test_lock_file_warns_when_no_locking_backend(monkeypatch):
+    monkeypatch.setattr(utils, "fcntl", None)
+    monkeypatch.setattr(utils, "msvcrt", None)
+
+    with pytest.warns(RuntimeWarning, match="no platform file locking mechanism available"):
+        utils._lock_file(10, 1)
