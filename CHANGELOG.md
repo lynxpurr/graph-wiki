@@ -1,5 +1,10 @@
 # Changelog
 
+## Unreleased — 区分诊断问题与披露（#47）
+
+- 保留原 `diagnosis` 数组及原始 `by_severity`，新增条目 `kind`、顶层 `disclosures` 和 `issue_by_severity`；代码区/scheme/空目标豁免是披露，正常互惠是评估，异常互惠仍是问题。未知 kind 按问题处理，避免静默漏报。
+- 周检严重度告警只比较真实问题，健康分的结构计数不再把披露当死链。基线保存分类版本及真实问题计数；旧混合计数不再静默参与新口径比较，必须重新保存基线。维度总分与满分不变。
+
 ## Unreleased — Windows 持久化兼容性
 
 ### Fixed
