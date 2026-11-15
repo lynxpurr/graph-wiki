@@ -84,7 +84,7 @@ jobs:
           }
           check "79/120" .venv/bin/python scripts/graph-test-suite.py --source wiki --wiki-root examples/mini-wiki --json
           check "85/130" .venv/bin/python scripts/graph-test-suite.py --source ontology --ontology-path examples/mini-ontology.jsonl --json
-          check "100.14/130" .venv/bin/python scripts/graph-test-suite.py --source wiki,ontology --wiki-root examples/mini-wiki --ontology-path examples/mini-ontology.jsonl --json
+          check "93.14/130" .venv/bin/python scripts/graph-test-suite.py --source wiki,ontology --wiki-root examples/mini-wiki --ontology-path examples/mini-ontology.jsonl --json
           check "111.61/140" .venv/bin/python scripts/graph-test-suite.py --source wiki,ontology,ragflow --wiki-root examples/mini-wiki --ontology-path examples/mini-ontology.jsonl --ragflow-path examples/mini-ragflow.jsonl --json
       - name: documented link-rot counters match actual output
         run: |

@@ -186,7 +186,8 @@ def _all_md_files(wiki_root):
         dirs[:] = [d for d in dirs if not d.startswith('.') and d not in ('node_modules',)]
         for f in files:
             if f.endswith('.md'): md_files.append(os.path.join(root, f))
-    return md_files
+    # os.walk order varies across filesystems; it must not decide graph order.
+    return sorted(md_files, key=lambda path: os.path.relpath(path, wiki_root).replace('\\', '/'))
 
 def _canonical_id(filepath: str, wiki_root: str) -> str:
     """Root-relative canonical node ID (no .md, no leading ./).

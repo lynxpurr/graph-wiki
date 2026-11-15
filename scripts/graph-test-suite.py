@@ -221,21 +221,28 @@ def t1():
 # ============================================================
 # TEST 2: 中心性三角对比 — PR vs Betweenness vs Closeness
 # ============================================================
+def _centrality_top(values, limit=5):
+    # Ignore floating-point accumulation noise, then break ties by node ID.
+    # Graph-loader node IDs are strings. Keep exactly five entries at the cutoff.
+    return sorted(values, key=lambda node: (-round(values[node], 12), node))[:limit]
+
+
 def t2():
     bc = nx.betweenness_centrality(G)
     cc = nx.closeness_centrality(G)
     
     # Top 5 by each metric
-    pr_top = set(sorted(pr, key=pr.get, reverse=True)[:5])
-    bc_top = set(sorted(bc, key=bc.get, reverse=True)[:5])
-    cc_top = set(sorted(cc, key=cc.get, reverse=True)[:5])
+    pr_ranked = _centrality_top(pr)
+    bc_ranked = _centrality_top(bc)
+    cc_ranked = _centrality_top(cc)
+    pr_top, bc_top, cc_top = map(set, (pr_ranked, bc_ranked, cc_ranked))
     
     overlap = len(pr_top & bc_top & cc_top)
     union = pr_top | bc_top | cc_top
     
-    detail = (f"PR Top5: {', '.join(sorted(pr_top, key=pr.get, reverse=True)[:3])}...\n"
-              f"BC Top5: {', '.join(sorted(bc_top, key=bc.get, reverse=True)[:3])}...\n"
-              f"CC Top5: {', '.join(sorted(cc_top, key=cc.get, reverse=True)[:3])}...\n"
+    detail = (f"PR Top5: {', '.join(pr_ranked)}\n"
+              f"BC Top5: {', '.join(bc_ranked)}\n"
+              f"CC Top5: {', '.join(cc_ranked)}\n"
               f"三榜交集: {overlap}/5, 总不同概念: {len(union)}/15")
     
     # overlap = number of concepts in all 3 lists. Ideal: 1-2 (some overlap, not identical)

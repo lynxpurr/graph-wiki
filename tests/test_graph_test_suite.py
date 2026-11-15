@@ -3,10 +3,13 @@
 from __future__ import annotations
 
 import importlib.util
+import json
 from pathlib import Path
+import random
 
 import networkx as nx
 from scipy.stats import spearmanr
+import pytest
 
 
 def _load_graph_test_suite():
@@ -16,6 +19,49 @@ def _load_graph_test_suite():
     assert spec.loader is not None
     spec.loader.exec_module(module)
     return module
+
+
+def test_centrality_cutoff_breaks_ties_by_id_despite_roundoff():
+    suite = _load_graph_test_suite()
+    # Six mathematically tied nodes compete for five slots. Tiny accumulation
+    # differences and insertion order must not select a different fifth node.
+    values = {node: 0.5 for node in reversed('abcdef')}
+    values['f'] += 1e-15
+    assert suite._centrality_top(values) == list('abcde')
+    # Real differences must still outrank the ID tiebreaker.
+    values['f'] = 0.500001
+    assert suite._centrality_top(values) == list('fabcd')
+
+
+@pytest.mark.parametrize('seed', [0, 2, 5, 7])
+@pytest.mark.parametrize(('source', 'expected_score'), [
+    ('wiki', 79), ('ontology', 85), ('wiki,ontology', 93.14),
+    ('wiki,ontology,ragflow', 111.61),
+])
+def test_mini_corpus_scores_ignore_file_insertion_order(
+    monkeypatch, capsys, seed, source, expected_score,
+):
+    import graph_loader
+
+    root = Path(__file__).resolve().parents[1]
+    wiki = root / 'examples' / 'mini-wiki'
+    paths = graph_loader._all_md_files(str(wiki))
+    random.Random(seed).shuffle(paths)
+    monkeypatch.setattr(graph_loader, '_all_md_files', lambda _root: paths)
+    suite = _load_graph_test_suite()
+    assert suite.main([
+        '--source', source, '--wiki-root', str(wiki),
+        '--ontology-path', str(root / 'examples' / 'mini-ontology.jsonl'),
+        '--ragflow-path', str(root / 'examples' / 'mini-ragflow.jsonl'),
+        '--json', '--no-write',
+    ]) == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload['summary']['score'] == expected_score
+    if source == 'wiki,ontology':
+        d2 = next(row for row in payload['results'] if row['name'] == '中心性三角')
+        assert d2['score'] == 3
+        assert '三榜交集: 4/5' in d2['detail']
+        assert 'CC Top5: algorithms, data-structures, sorting, computational-complexity, donald-knuth' in d2['detail']
 
 
 def test_t10_uses_spearman_correlation_with_average_tie_ranks():
