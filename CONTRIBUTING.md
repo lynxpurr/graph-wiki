@@ -27,10 +27,10 @@ python -m pytest tests/ --cov=scripts --cov-report=term-missing
 
 | 分支 | 角色 | 规则 |
 |---|---|---|
-| `main` | 发布面。只由发布 PR 与回合并写入；标签打在发布提交上。 | 必须走 PR，7 项检查全绿，禁 force push，禁删除 |
+| `main` | 发布面。只由发布 PR 与回合并写入；标签打在发布提交上。 | 必须走 PR，9 项检查全绿，禁 force push，禁删除 |
 | `develop` | 集成分支。工作先落这里，攒够一次发布再往 `main` 走。 | 同上 |
 
-两条分支都开了 `enforce_admins`：管理员同样被规则约束。要临时解除保护，是一次显式 API 调用并留痕，不是日常操作。
+两条分支都开了 `enforce_admins`：管理员同样被规则约束。9 项必需检查包括 Linux 与 Windows 各两个 Python 版本（3.10、3.12），以及 quickstart、secret scan、static analysis、score reproducibility、claims；检查必须对应当前提交。要临时解除保护，是一次显式 API 调用并留痕，不是日常操作。
 
 仓库的默认分支是 `develop`。所以 `gh pr create` 不带 `--base` 时会默认落在集成线；想把变更送进 `main`，必须显式写 `--base main`——这个额外动作是有意的，发布不该是顺手发生的。
 
@@ -48,7 +48,9 @@ develop ──┬── feat/x ──┐
 - 热修也必须走分支和 PR。「就一行」恰恰是历史失去保护的方式。
 - 合并方式按路径分：**短命分支 → `develop` 用 squash**（一次改动一条提交，读起来干净）；**发布 PR、以及回合并用 merge commit**（保留祖先关系）。
 - 每次发布后，把 `main` 回合并进 `develop`。这不是可选步骤：发布 PR 若被 squash，`main` 上会生成一个全新提交，两条历史的共同祖先就停在发布之前——此后两侧再各自改到同一处文件，git 会判成冲突，即使内容本来一致。祖先关系只能靠 merge commit 接回去。本仓库第一次发布（#34）就撞上了这个陷阱，`#36` 卡在 `mergeable=dirty`，两棵树的实际差异只有两行。
-- 合并后删分支。留着的已合并分支迟早被误用，而且它会继续收到推送。
+- 仓库已开启合并 PR 后自动删除临时分支；`main` 与 `develop` 由保护规则禁止删除。已合并分支不要继续提交，后续工作从最新 `develop` 新建分支。
+- 清理 squash 合并的分支时，核对 PR 已合并、待删分支头仍等于该 PR 最后提交、合并结果已经进入 `develop`。不能只依赖 `git branch --merged`：squash 会生成新提交，原分支头不一定是集成分支的祖先。有新提交或未合并工作的分支保留。
+- 本地定期运行 `git fetch --prune origin` 清理失效远端引用；可用 `git config remote.origin.prune true` 让本 clone 的 fetch 自动执行清理。随后仅删除已核对完成的本地临时分支。
 - 必需检查项的名字改了，保护配置必须同步改——否则 PR 会永远停在 waiting，因为它在等一个不再存在的检查。
 
 ## Syncing documented scores
