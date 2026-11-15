@@ -3,12 +3,12 @@
 
 from __future__ import annotations
 
+import errno
 import json
 import os
 import stat
 import tempfile
 from typing import Any
-import warnings
 
 try:
     import fcntl
@@ -35,20 +35,13 @@ def _lock_file(fd: int, nbytes: int = 1) -> None:
     if fcntl is not None:
         fcntl.flock(fd, fcntl.LOCK_EX)
     elif msvcrt is not None:
-        try:
-            os.lseek(fd, 0, os.SEEK_SET)
-            msvcrt.locking(fd, msvcrt.LK_LOCK, nbytes)
-        except OSError as exc:
-            warnings.warn(
-                f"atomic_append_jsonl: file locking unavailable on descriptor {fd} ({exc}); proceeding unlocked",
-                RuntimeWarning,
-                stacklevel=2,
-            )
+        # LK_LOCK already retries a contended lock for a bounded period.
+        # If it still fails, propagate the error rather than writing unlocked.
+        os.lseek(fd, 0, os.SEEK_SET)
+        msvcrt.locking(fd, msvcrt.LK_LOCK, nbytes)
     else:
-        warnings.warn(
-            "atomic_append_jsonl: no platform file locking mechanism available; proceeding unlocked",
-            RuntimeWarning,
-            stacklevel=2,
+        raise OSError(
+            errno.ENOSYS, "atomic_append_jsonl: no platform file locking mechanism available",
         )
 
 
@@ -56,11 +49,8 @@ def _unlock_file(fd: int, nbytes: int = 1) -> None:
     if fcntl is not None:
         fcntl.flock(fd, fcntl.LOCK_UN)
     elif msvcrt is not None:
-        try:
-            os.lseek(fd, 0, os.SEEK_SET)
-            msvcrt.locking(fd, msvcrt.LK_UNLCK, nbytes)
-        except OSError:
-            pass
+        os.lseek(fd, 0, os.SEEK_SET)
+        msvcrt.locking(fd, msvcrt.LK_UNLCK, nbytes)
 
 
 def atomic_write(path: str | os.PathLike[str], content: str | bytes) -> str:
@@ -98,7 +88,7 @@ def atomic_write(path: str | os.PathLike[str], content: str | bytes) -> str:
 
 
 def atomic_append_jsonl(path: str | os.PathLike[str], line_dict: dict[str, Any]) -> str:
-    """Append one JSON object under an exclusive process lock and fsync it."""
+    """Append under an exclusive lock and fsync; lock failure appends no bytes."""
     if not isinstance(line_dict, dict):
         raise TypeError("line_dict must be a dict")
 
@@ -110,16 +100,16 @@ def atomic_append_jsonl(path: str | os.PathLike[str], line_dict: dict[str, Any])
     fd = os.open(target, os.O_WRONLY | os.O_CREAT | os.O_APPEND, 0o600)
     try:
         _lock_file(fd)
-        view = memoryview(encoded)
-        while view:
-            written = os.write(fd, view)
-            view = view[written:]
-        os.fsync(fd)
-    finally:
         try:
-            _unlock_file(fd)
+            view = memoryview(encoded)
+            while view:
+                written = os.write(fd, view)
+                view = view[written:]
+            os.fsync(fd)
         finally:
-            os.close(fd)
+            _unlock_file(fd)
+    finally:
+        os.close(fd)
     _fsync_directory(directory)
     return target
 

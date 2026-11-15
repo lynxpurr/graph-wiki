@@ -1,5 +1,13 @@
 # Changelog
 
+## Unreleased — Windows 持久化兼容性
+
+### Fixed
+
+- 文件锁按平台使用 `fcntl.flock` 或 `msvcrt.locking`，Windows 跳过不支持的目录 fsync。
+- 获取锁失败（含定位失败或没有锁后端）时抛出异常，禁止降级为无锁追加；仅成功获取锁后才解锁，任何失败路径均关闭文件描述符。Windows 的 `LK_LOCK` 使用其内置有限重试，失败后不再写入。解锁失败同样报告异常，并通过关闭描述符释放锁。
+- 新增失败获取锁时内容不变、无写入/解锁操作、描述符关闭，以及写入/fsync/解锁失败后的清理回归测试。
+
 ## Unreleased — 评分顺序稳定性
 
 ### Fixed
