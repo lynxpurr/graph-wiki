@@ -47,6 +47,7 @@ develop ──┬── feat/x ──┐
 - 工作先落 `develop`。发布是一次从 `develop` 到 `main` 的 PR，标签打在合并后的 `main` 提交上。
 - 热修也必须走分支和 PR。「就一行」恰恰是历史失去保护的方式。
 - 合并方式按路径分：**短命分支 → `develop` 用 squash**（一次改动一条提交，读起来干净）；**发布 PR、以及回合并用 merge commit**（保留祖先关系）。
+- 发布与分支巡检后运行 `git fetch origin`、`git merge-base --is-ancestor origin/main origin/develop` 核对回合并是否完成（退出码 0 表示已包含）。即使文件没有差异，缺失的发布 merge commit 仍需回合并；回合并 PR 使用 merge commit，不能 squash 丢掉祖先关系。
 - 每次发布后，把 `main` 回合并进 `develop`。这不是可选步骤：发布 PR 若被 squash，`main` 上会生成一个全新提交，两条历史的共同祖先就停在发布之前——此后两侧再各自改到同一处文件，git 会判成冲突，即使内容本来一致。祖先关系只能靠 merge commit 接回去。本仓库第一次发布（#34）就撞上了这个陷阱，`#36` 卡在 `mergeable=dirty`，两棵树的实际差异只有两行。
 - 仓库已开启合并 PR 后自动删除临时分支；`main` 与 `develop` 由保护规则禁止删除。已合并分支不要继续提交，后续工作从最新 `develop` 新建分支。
 - 清理 squash 合并的分支时，核对 PR 已合并、待删分支头仍等于该 PR 最后提交、合并结果已经进入 `develop`。不能只依赖 `git branch --merged`：squash 会生成新提交，原分支头不一定是集成分支的祖先。有新提交或未合并工作的分支保留。
