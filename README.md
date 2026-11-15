@@ -224,6 +224,12 @@ prose line
 `--exit-zero`：它无条件返回 0，但**不改变**输出文本与 `pass` 字段——判定结果
 依旧如实打印。该开关可与 `--json` 组合使用。
 
+### 周检状态与旧名基线回退
+
+`weekly-health-check --json` 顶层 `status` 为 `ok`、`degraded`、`baseline_missing`、`baseline_corrupt`、`baseline_invalid`、`baseline_unreadable` 或 `execution_error`。退出码继续保持 0/1 兼容；`--exit-zero` 只改退出码，不改 `status` 或 `pass`。同时发生时，执行错误优先于基线异常，基线异常优先于退化，所有细节仍保留在 `errors` 和 `alerts`。
+
+新名基线优先；新名不存在时兼容回退旧名，**不因旧文件名本身判退化或损坏**。回退在 `baseline_source: legacy`、`baseline_migration`、`warnings` 以及文本报告中明确披露，并返回 UTC `baseline_mtime` 供判断文件时间。`baseline_status` 独立记录基线状态。新名文件损坏时不回退旧文件，以免掩盖故障。旧基线如果缺少新版问题分类计数，仍需重新 `baseline-save`（见前述统计口径迁移要求）。
+
 ### graph-test-suite.py 退出码与验收阈值
 
 | 退出码 | 含义 |

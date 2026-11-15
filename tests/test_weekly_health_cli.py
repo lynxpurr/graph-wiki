@@ -71,6 +71,27 @@ def test_exits_zero_when_check_passes(baselined_wiki: Path):
     assert "✅ 全部指标正常" in proc.stdout
 
 
+def test_baseline_save_message_matches_legacy_fallback(baselined_wiki):
+    primary = baselined_wiki / '.graph-baseline.json'
+    legacy = baselined_wiki / '.regression-baseline.json'
+    shutil.copyfile(primary, legacy)
+    saved = subprocess.run(
+        [sys.executable, str(ANALYZER), 'baseline-save', '--source', 'wiki',
+         '--wiki-root', str(baselined_wiki)],
+        capture_output=True, text=True, timeout=180,
+    )
+    assert saved.returncode == 0
+    assert '仍会回退读取旧文件' in saved.stdout
+    assert '已不再读取' not in saved.stdout
+    primary.unlink()
+    checked = _weekly(baselined_wiki, '--json')
+    result = json.loads(checked.stdout)
+    assert checked.returncode == 0, result
+    assert result['baseline_source'] == 'legacy'
+    assert result['warnings']
+    assert result['baseline_mtime']
+
+
 def test_exits_one_on_real_regression(baselined_wiki: Path):
     _degrade(baselined_wiki)
 
@@ -115,12 +136,14 @@ def test_json_mode_exit_code_reflects_verdict(baselined_wiki: Path):
     healthy = _weekly(baselined_wiki, "--json")
     assert healthy.returncode == 0, healthy.stdout + healthy.stderr
     assert json.loads(healthy.stdout)["pass"] is True
+    assert json.loads(healthy.stdout)['status'] == 'ok'
 
     _degrade(baselined_wiki)
     regressed = _weekly(baselined_wiki, "--json")
     payload = json.loads(regressed.stdout)
     assert regressed.returncode == 1, regressed.stdout + regressed.stderr
     assert payload["pass"] is False
+    assert payload['status'] == 'degraded'
     assert payload["alerts"]
 
 
@@ -131,6 +154,7 @@ def test_json_mode_exit_zero_flag_forces_success_status(baselined_wiki: Path):
 
     assert proc.returncode == 0, proc.stdout + proc.stderr
     assert json.loads(proc.stdout)["pass"] is False
+    assert json.loads(proc.stdout)['status'] == 'degraded'
 
 
 def test_empty_by_severity_baseline_does_not_hide_new_p0(baselined_wiki: Path):
