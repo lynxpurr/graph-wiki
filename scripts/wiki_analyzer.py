@@ -18,6 +18,7 @@ from datetime import datetime, timezone
 from baseline_paths import resolve_baseline, resolve_primary_path
 from scorecard import build_scorecard
 from utils import atomic_append_jsonl, atomic_write
+from diagnosis_kinds import KINDS_VERSION, severity_counts
 
 __version__ = "3.2.0"
 
@@ -286,6 +287,8 @@ def baseline_save(result: dict, ontology_path: str = None,
         "scores": legacy_scores,
         "diagnosis_summary": {
             "total": len(result.get("diagnosis", [])),
+            "kind_version": KINDS_VERSION,
+            "issue_by_severity": severity_counts(result.get('diagnosis', []), issues_only=True),
             # 零计数 severity 也要落盘：否则读取方（weekly-health-check）会把
             # 缺失的 P0/P1 当成「无基线」（issue #1 同一类假绿）。
             "by_severity": _normalized_severity_counts(result),

@@ -22,6 +22,7 @@ if SCRIPTS_DIR not in sys.path:
     sys.path.insert(0, SCRIPTS_DIR)
 
 from baseline_paths import resolve_baseline  # noqa: E402  (shared resolver)
+from diagnosis_kinds import KINDS_VERSION, is_issue, severity_counts
 
 PYTHON = os.environ.get("WIKI_GRAPH_PYTHON", sys.executable)
 
@@ -50,7 +51,7 @@ def _count_by_severity(diagnosis):
     """Count current diagnostic issues using the baseline severity schema."""
     return {
         severity: sum(
-            1 for item in diagnosis if item.get("severity") == severity
+            1 for item in diagnosis if item.get("severity") == severity and is_issue(item)
         )
         for severity in ("P0", "P1", "P2")
     }
@@ -202,6 +203,24 @@ def check_regression(source, ontology_path=None, wiki_root=None,
     diagnosis = diag_result.get("diagnosis", [])
     current_severity = _count_by_severity(diagnosis)
     baseline_severity, severity_reason = _baseline_severity(baseline)
+    if baseline_severity is not None and diag_result.get('diagnosis_kind_version') == KINDS_VERSION:
+        summary = baseline.get('diagnosis_summary', {})
+        issue_counts = summary.get('issue_by_severity')
+        if type(summary.get('kind_version')) is not int or summary.get('kind_version') != KINDS_VERSION or not isinstance(issue_counts, dict):
+            baseline_severity, severity_reason = None, '基线缺少问题分类计数，请重新 baseline-save（旧计数包含披露项）'
+        elif any(
+            not isinstance(issue_counts.get(key), int)
+            or isinstance(issue_counts.get(key), bool)
+            or issue_counts[key] < 0
+            or not isinstance(baseline_severity.get(key, 0), int)
+            or isinstance(baseline_severity.get(key, 0), bool)
+            or baseline_severity.get(key, 0) < 0
+            or issue_counts[key] > baseline_severity.get(key, 0)
+            for key in ('P0', 'P1', 'P2')
+        ):
+            baseline_severity, severity_reason = None, '基线问题分类计数无效或与总计数不自洽'
+        else:
+            baseline_severity = issue_counts
     severity_errors = []
 
     if baseline_severity is None:
@@ -299,7 +318,12 @@ def check_regression(source, ontology_path=None, wiki_root=None,
         "timestamp": datetime.now().isoformat(),
         "source": source,
         "multi_source": multi_source,
-        "diagnosis_summary": {"by_severity": current_severity},
+        "diagnosis_summary": {
+            "kind_version": KINDS_VERSION,
+            "by_severity": severity_counts(diagnosis),
+            "issue_by_severity": current_severity,
+        },
+        "disclosures": [item for item in diagnosis if not is_issue(item)],
         "baseline_path": baseline_path,
         "baseline_found": bool(baseline),
         "baseline_migration": resolution.migration_note,

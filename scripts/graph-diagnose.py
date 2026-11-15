@@ -30,6 +30,7 @@ import networkx as nx
 from graph_loader import (build_graph, iter_wikilinks, _canonical_id,
                           normalize_sources, _WIKILINK_RE)
 from utils import atomic_append_jsonl, atomic_write
+from diagnosis_kinds import KINDS_VERSION, is_issue, severity_counts
 import sys as _sys
 _sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
@@ -1114,6 +1115,12 @@ def json_output(G, de, iso, spo, sd, rec, lr, st, full=False, source="wiki",
             'thresholds': THRESHOLDS,
         },
     }
+    result['diagnosis_kind_version'] = KINDS_VERSION
+    result['disclosures'] = [item for item in result['diagnosis'] if not is_issue(item)]
+    result['diagnosis_summary'] = {
+        'by_severity': severity_counts(result['diagnosis']),
+        'issue_by_severity': severity_counts(result['diagnosis'], issues_only=True),
+    }
     return json.dumps(result, ensure_ascii=False, indent=2)
 
 
@@ -1203,6 +1210,7 @@ def _diagnosis_to_array(de, iso, spo, sd, rec, lr, st, full,
         items.append({
             'dimension': 'D4',
             'title': f"代码围栏/行内代码内链接未检查: {lr.get('code_block_exempt')} 处",
+            'kind': 'disclosure',
             'severity': 'P2',
             'task_type': 'docs',
             'auto_queue': False,
@@ -1223,6 +1231,7 @@ def _diagnosis_to_array(de, iso, spo, sd, rec, lr, st, full,
         items.append({
             'dimension': 'D4',
             'title': f"skill:/skills: 前缀链接未检查: {lr.get('skill_scheme_exempt')} 处",
+            'kind': 'disclosure',
             'severity': 'P2',
             'task_type': 'docs',
             'auto_queue': False,
@@ -1242,6 +1251,7 @@ def _diagnosis_to_array(de, iso, spo, sd, rec, lr, st, full,
         items.append({
             'dimension': 'D4',
             'title': f"空目标链接未计入死链: {lr.get('empty_target_skipped')} 处",
+            'kind': 'disclosure',
             'severity': 'P2',
             'task_type': 'docs',
             'auto_queue': False,
@@ -1270,6 +1280,7 @@ def _diagnosis_to_array(de, iso, spo, sd, rec, lr, st, full,
     items.append({
         'dimension': 'D6',
         'title': f"互惠评估",
+        'kind': 'assessment' if rec.get('status') == 'healthy' else 'issue',
         'severity': 'P2',
         'task_type': 'docs',
         'auto_queue': False,
@@ -1335,6 +1346,8 @@ def _diagnosis_to_array(de, iso, spo, sd, rec, lr, st, full,
                 ),
                 'evidence': d10,
             })
+    for item in items:
+        item.setdefault('kind', 'issue')
     return items
 
 
