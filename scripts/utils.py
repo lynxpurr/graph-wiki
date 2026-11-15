@@ -3,20 +3,54 @@
 
 from __future__ import annotations
 
-import fcntl
+import errno
 import json
 import os
 import stat
 import tempfile
 from typing import Any
 
+try:
+    import fcntl
+except ImportError:
+    fcntl = None  # type: ignore
+
+try:
+    import msvcrt
+except ImportError:
+    msvcrt = None  # type: ignore
+
 
 def _fsync_directory(directory: str) -> None:
+    if os.name == "nt":
+        return
     dir_fd = os.open(directory, os.O_RDONLY)
     try:
         os.fsync(dir_fd)
     finally:
         os.close(dir_fd)
+
+
+def _lock_file(fd: int, nbytes: int = 1) -> None:
+    if fcntl is not None:
+        fcntl.flock(fd, fcntl.LOCK_EX)
+    elif msvcrt is not None:
+        # LK_LOCK already retries a contended lock for a bounded period.
+        # If it still fails, propagate the error rather than writing unlocked.
+        os.lseek(fd, 0, os.SEEK_SET)
+        msvcrt.locking(fd, msvcrt.LK_LOCK, nbytes)
+    else:
+        raise OSError(
+            errno.ENOSYS, "atomic_append_jsonl: no platform file locking mechanism available",
+        )
+
+
+def _unlock_file(fd: int, nbytes: int = 1) -> None:
+    if fcntl is not None:
+        fcntl.flock(fd, fcntl.LOCK_UN)
+    elif msvcrt is not None:
+        os.lseek(fd, 0, os.SEEK_SET)
+        msvcrt.locking(fd, msvcrt.LK_UNLCK, nbytes)
 
 
 def atomic_write(path: str | os.PathLike[str], content: str | bytes) -> str:
@@ -54,7 +88,7 @@ def atomic_write(path: str | os.PathLike[str], content: str | bytes) -> str:
 
 
 def atomic_append_jsonl(path: str | os.PathLike[str], line_dict: dict[str, Any]) -> str:
-    """Append one JSON object under an exclusive process lock and fsync it."""
+    """Append under an exclusive lock and fsync; lock failure appends no bytes."""
     if not isinstance(line_dict, dict):
         raise TypeError("line_dict must be a dict")
 
@@ -65,16 +99,17 @@ def atomic_append_jsonl(path: str | os.PathLike[str], line_dict: dict[str, Any])
 
     fd = os.open(target, os.O_WRONLY | os.O_CREAT | os.O_APPEND, 0o600)
     try:
-        fcntl.flock(fd, fcntl.LOCK_EX)
-        view = memoryview(encoded)
-        while view:
-            written = os.write(fd, view)
-            view = view[written:]
-        os.fsync(fd)
-    finally:
+        _lock_file(fd)
         try:
-            fcntl.flock(fd, fcntl.LOCK_UN)
+            view = memoryview(encoded)
+            while view:
+                written = os.write(fd, view)
+                view = view[written:]
+            os.fsync(fd)
         finally:
-            os.close(fd)
+            _unlock_file(fd)
+    finally:
+        os.close(fd)
     _fsync_directory(directory)
     return target
+
