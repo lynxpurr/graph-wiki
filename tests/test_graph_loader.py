@@ -20,6 +20,24 @@ from graph_loader import (
 )
 
 
+def test_md_scan_order_ignores_filesystem_enumeration(monkeypatch, tmp_path):
+    import graph_loader
+
+    # Same walk entries in opposite orders must yield the same node order.
+    walks = [
+        [(str(tmp_path), [], ['z.md', 'a.md', 'ignored.txt']),
+         (str(tmp_path / 'concepts'), [], ['y.md', 'b.md'])],
+        [(str(tmp_path / 'concepts'), [], ['b.md', 'y.md']),
+         (str(tmp_path), [], ['a.md', 'z.md', 'ignored.txt'])],
+    ]
+    for entries in walks:
+        monkeypatch.setattr(graph_loader.os, 'walk', lambda _root: iter(entries))
+        paths = graph_loader._all_md_files(str(tmp_path))
+        assert [Path(path).relative_to(tmp_path).as_posix() for path in paths] == [
+            'a.md', 'concepts/b.md', 'concepts/y.md', 'z.md',
+        ]
+
+
 def test_iter_wikilinks_parses_alias_anchor_and_code():
     content = """[[basic]] [[target|Label]] [[page#anchor]]
 `[[inline-code]]`
