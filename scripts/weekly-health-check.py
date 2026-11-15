@@ -14,8 +14,8 @@
 `--exit-zero` 无条件返回 0（旧调用方的逃生开关），不影响判定结果本身。
 """
 
-import subprocess, json, os, re, sys, argparse
-from datetime import datetime
+import subprocess, json, os, re, sys, argparse, math
+from datetime import datetime, timezone
 
 SCRIPTS_DIR = os.path.dirname(os.path.abspath(__file__))
 if SCRIPTS_DIR not in sys.path:
@@ -118,9 +118,52 @@ def _load_baseline(source, ontology_path=None, wiki_root=None):
         return {}, baseline_path
     try:
         with open(baseline_path, "r", encoding="utf-8") as f:
-            return json.load(f), baseline_path
-    except (json.JSONDecodeError, PermissionError):
+            data = json.load(f)
+            return data if isinstance(data, dict) else {}, baseline_path
+    except (ValueError, OSError, UnicodeError):
         return {}, baseline_path
+
+
+def _baseline_problem(baseline, path):
+    """Classify read failures without changing the public tuple loader API."""
+    if not baseline:
+        try:
+            with open(path, encoding='utf-8') as handle:
+                json.load(handle)
+        except FileNotFoundError:
+            return 'missing', '不存在'
+        except (ValueError, UnicodeError):
+            return 'corrupt', '不是有效的 UTF-8 JSON'
+        except OSError:
+            return 'unreadable', '无法读取'
+        return 'invalid', '必须是非空 JSON 对象并含完整基线数据'
+    for key in ('scores', 'test_suite', 'graph_stats', 'multi_source'):
+        if key in baseline and not isinstance(baseline[key], dict):
+            return 'invalid', f'{key} 必须是对象'
+    if 'total' not in baseline.get('scores', {}) and 'total_score' not in baseline.get('test_suite', {}):
+        return 'invalid', '缺少基线分数'
+    if any(field not in baseline.get('graph_stats', {}) for field in ('nodes', 'edges')):
+        return 'invalid', '缺少基线节点/边数'
+    for key in ('scores', 'test_suite'):
+        field = 'total' if key == 'scores' else 'total_score'
+        value = baseline.get(key, {}).get(field, 0)
+        if not isinstance(value, (int, float)) or isinstance(value, bool) or not math.isfinite(value) or value < 0:
+            return 'invalid', f'{key}.{field} 必须是非负有限数值'
+    for field in ('nodes', 'edges'):
+        value = baseline.get('graph_stats', {}).get(field, 0)
+        if not isinstance(value, int) or isinstance(value, bool) or value < 0:
+            return 'invalid', f'graph_stats.{field} 必须是非负整数'
+    multi = baseline.get('multi_source', {})
+    if 'D8' in multi and not isinstance(multi['D8'], dict):
+        return 'invalid', 'multi_source.D8 必须是对象'
+    d8 = multi.get('D8', {})
+    coverage = d8.get('wiki_coverage', 0)
+    conflicts = d8.get('conflicts', 0)
+    if not isinstance(coverage, (int, float)) or isinstance(coverage, bool) or not math.isfinite(coverage) or not 0 <= coverage <= 1:
+        return 'invalid', 'multi_source.D8.wiki_coverage 必须是 0–1 的有限数值'
+    if not isinstance(conflicts, int) or isinstance(conflicts, bool) or conflicts < 0:
+        return 'invalid', 'multi_source.D8.conflicts 必须是非负整数'
+    return 'ready', None
 
 
 def _run_diagnose(source, ontology_path=None, wiki_root=None, ragflow_path=None):
@@ -174,6 +217,9 @@ def check_regression(source, ontology_path=None, wiki_root=None,
     """Run all checks and return structured result."""
     baseline, baseline_path = _load_baseline(source, ontology_path, wiki_root)
     resolution = _baseline_resolution(source, ontology_path, wiki_root)
+    baseline_status, baseline_problem = _baseline_problem(baseline, baseline_path)
+    if baseline_problem:
+        baseline = {}  # Invalid input must not reach numeric/dict comparisons.
     diag_result, diag_err = _run_diagnose(
         source, ontology_path, wiki_root, ragflow_path,
     )
@@ -221,7 +267,7 @@ def check_regression(source, ontology_path=None, wiki_root=None,
             baseline_count = baseline_severity.get(severity)
             if baseline_count is None:
                 baseline_count = 0
-            if not isinstance(baseline_count, int) or isinstance(baseline_count, bool):
+            if not isinstance(baseline_count, int) or isinstance(baseline_count, bool) or baseline_count < 0:
                 severity_errors.append(
                     f"基线严重度数据无效 ({severity}={baseline_count!r})，无法比较"
                 )
@@ -287,17 +333,38 @@ def check_regression(source, ontology_path=None, wiki_root=None,
     # 无基线时必须显式失败，不能静默空转成 pass=true（issue #1 假绿护栏）。
     if not baseline:
         errors.append(
-            f"无基线: {baseline_path} 不存在或无法解析 — 回归对比未执行；"
+            f"无基线: {baseline_path} {baseline_problem or '数据无效'} — 回归对比未执行；"
             f"请先运行 wiki_analyzer.py baseline-save --source {source}"
         )
     errors.extend(severity_errors)
 
     # v3.1.1 (C5): pass = no alerts AND no errors (false-green fix)
     passed = len(alerts) == 0 and len(errors) == 0
+    if diag_err or test_err:
+        status = 'execution_error'
+    elif baseline_status != 'ready':
+        status = f'baseline_{baseline_status}'
+    elif severity_errors:
+        status = 'baseline_invalid'
+        baseline_status = 'invalid'
+    elif alerts:
+        status = 'degraded'
+    else:
+        status = 'ok'
+    warnings = [resolution.migration_note] if resolution.migration_note else []
+    try:
+        baseline_mtime = datetime.fromtimestamp(os.path.getmtime(baseline_path), timezone.utc).isoformat()
+    except OSError:
+        baseline_mtime = None
 
     return {
         "timestamp": datetime.now().isoformat(),
         "source": source,
+        "status": status,
+        "baseline_status": baseline_status,
+        "baseline_source": 'legacy' if resolution.used_legacy else 'primary',
+        "baseline_mtime": baseline_mtime,
+        "warnings": warnings,
         "multi_source": multi_source,
         "diagnosis_summary": {"by_severity": current_severity},
         "baseline_path": baseline_path,

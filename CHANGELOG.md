@@ -1,5 +1,10 @@
 # Changelog
 
+## Unreleased — 周检状态与基线迁移（#46、#48）
+
+- 修正 baseline-save 的迁移提示，明确新名缺失时仍回退旧名。兼容回退通过 warnings、baseline_source、baseline_migration、baseline_mtime 及文本报告披露；新名损坏不偷偷回退。
+- 新增顶层 status 与 baseline_status，区分正常、退化、缺失/损坏/无效/不可读基线及执行失败。保留 0/1 退出码，--exit-zero 不改变状态。非法 JSON、根对象或数值类型不再导致异常崩溃或假通过。
+
 ## Unreleased — Windows 输出流与测试
 
 - Windows 使用 `CompareObjectHandles` 检查是否为同一内核对象，兼容合并管道；能力不可用时显式报错。独立 stderr 保留失败告警，合并流保持 scorecard JSON 可解析。修复 #55 的剩余输出流问题。

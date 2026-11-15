@@ -671,8 +671,8 @@ if __name__ == "__main__":
         ).legacy_path
         if legacy and os.path.exists(legacy):
             print(
-                f"迁移提示: 旧基线 {legacy} 仍存在（已不再读取）。"
-                f"请确认新基线可用后删除旧文件。"
+                f"迁移提示: 旧基线 {legacy} 仍存在。新基线在位时优先读取新文件；"
+                f"新文件缺失时仍会回退读取旧文件。请确认新基线可用后删除旧文件。"
             )
 
     elif args.action == "trend-check":
