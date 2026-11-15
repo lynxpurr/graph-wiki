@@ -16,8 +16,8 @@ import pytest
 import baseline_paths
 import wiki_analyzer as analyzer
 
-ONTOLOGY_PATH = "/tmp/does-not-need-to-exist/ontology.jsonl"
-WIKI_ROOT = "/tmp/does-not-need-to-exist/wiki"
+ONTOLOGY_PATH = os.path.abspath(os.path.join('does-not-need-to-exist', 'ontology.jsonl'))
+WIKI_ROOT = os.path.abspath(os.path.join('does-not-need-to-exist', 'wiki'))
 
 
 def _resolved_paths(load_script_module, source, **kwargs):
@@ -60,7 +60,7 @@ def test_single_wiki_source_uses_wiki_root_not_ontology_dir():
 def test_single_ontology_source_uses_ontology_dir():
     path = analyzer._baseline_path_for_source("ontology", ontology_path=ONTOLOGY_PATH)
 
-    assert path == "/tmp/does-not-need-to-exist/.graph-baseline.json"
+    assert path == os.path.join(os.path.dirname(ONTOLOGY_PATH), ".graph-baseline.json")
 
 
 def test_multi_source_keeps_slug_naming():

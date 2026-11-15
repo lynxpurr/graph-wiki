@@ -1,5 +1,10 @@
 # Changelog
 
+## Unreleased — Windows 输出流与测试
+
+- Windows 使用 `CompareObjectHandles` 检查是否为同一内核对象，兼容合并管道；能力不可用时显式报错。独立 stderr 保留失败告警，合并流保持 scorecard JSON 可解析。修复 #55 的剩余输出流问题。
+- 修正基线路径测试的 POSIX 常量假设（#51），新增 Windows Python 3.10/3.12 CI；保留既有 Linux 必需检查名称。
+
 ## Unreleased — Windows 持久化兼容性
 
 ### Fixed
