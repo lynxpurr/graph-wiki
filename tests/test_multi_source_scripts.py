@@ -22,6 +22,23 @@ def _run(script: str, *args: str) -> subprocess.CompletedProcess:
     )
 
 
+@pytest.mark.parametrize('mode', ['--quiet', '--scorecard'])
+@pytest.mark.parametrize('merge_streams', [False, True])
+def test_scorecard_pipe_aliasing_preserves_json_and_diagnostics(tmp_wiki, mode, merge_streams):
+    result = subprocess.run(
+        [sys.executable, str(SCRIPTS / 'graph-test-suite.py'), '--source', 'wiki',
+         '--wiki-root', str(tmp_wiki), mode],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT if merge_streams else subprocess.PIPE,
+        text=True, timeout=60,
+    )
+    assert result.returncode == 1
+    payload = json.loads(result.stdout)
+    assert payload['legacy_scores']['dimensions']
+    if not merge_streams:
+        assert 'Failing dimensions' in result.stderr
+
+
 def test_graph_test_suite_adds_fusion_scores(
     tmp_wiki: Path, tmp_ontology_graph: Path,
 ):

@@ -67,6 +67,22 @@ ONTOLOGY_ALIGNMENT = None
 RAGFLOW_COVERAGE = None
 
 
+def _windows_same_object(first_fileno, second_fileno):
+    """Compare kernel objects, including duplicated pipe handles (Windows 10+)."""
+    import ctypes
+    from ctypes import wintypes
+    import msvcrt
+
+    try:
+        compare = ctypes.WinDLL('kernelbase', use_last_error=True).CompareObjectHandles
+    except (AttributeError, OSError) as exc:
+        raise OSError('Windows shared-stream detection requires CompareObjectHandles') from exc
+    compare.argtypes = [wintypes.HANDLE, wintypes.HANDLE]
+    compare.restype = wintypes.BOOL
+    return bool(compare(msvcrt.get_osfhandle(first_fileno),
+                        msvcrt.get_osfhandle(second_fileno)))
+
+
 def _streams_share_destination(first, second):
     """Return whether two file objects point at the same pipe or file."""
     if first is second:
@@ -76,9 +92,11 @@ def _streams_share_destination(first, second):
         second_fileno = second.fileno()
         if first_fileno == second_fileno:
             return True
+        if sys.platform == 'win32':
+            return _windows_same_object(first_fileno, second_fileno)
         first_stat = os.fstat(first_fileno)
         second_stat = os.fstat(second_fileno)
-    except (AttributeError, OSError):
+    except AttributeError:
         return False
     if first_stat.st_ino == 0 or second_stat.st_ino == 0:
         return False
