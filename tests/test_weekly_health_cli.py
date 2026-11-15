@@ -167,6 +167,7 @@ def test_empty_by_severity_baseline_does_not_hide_new_p0(baselined_wiki: Path):
     baseline = json.loads(baseline_path.read_text(encoding="utf-8"))
     baseline["diagnosis_summary"]["by_severity"] = {}
     baseline["diagnosis_summary"]["total"] = 0
+    baseline["diagnosis_summary"]["issue_by_severity"] = {"P0": 0, "P1": 0, "P2": 0}
     baseline_path.write_text(
         json.dumps(baseline, ensure_ascii=False, indent=2), encoding="utf-8",
     )

@@ -5,6 +5,11 @@
 - 修正 baseline-save 的迁移提示，明确新名缺失时仍回退旧名。兼容回退通过 warnings、baseline_source、baseline_migration、baseline_mtime 及文本报告披露；新名损坏不偷偷回退。
 - 新增顶层 status 与 baseline_status，区分正常、退化、缺失/损坏/无效/不可读基线及执行失败。保留 0/1 退出码，--exit-zero 不改变状态。非法 JSON、根对象或数值类型不再导致异常崩溃或假通过。
 
+## Unreleased — 区分诊断问题与披露（#47）
+
+- 保留原 `diagnosis` 数组及原始 `by_severity`，新增条目 `kind`、顶层 `disclosures` 和 `issue_by_severity`；代码区/scheme/空目标豁免是披露，正常互惠是评估，异常互惠仍是问题。未知 kind 按问题处理，避免静默漏报。
+- 周检严重度告警只比较真实问题，健康分的结构计数不再把披露当死链。基线保存分类版本及真实问题计数；旧混合计数不再静默参与新口径比较，必须重新保存基线。维度总分与满分不变。
+
 ## Unreleased — Windows 输出流与测试
 
 - Windows 使用 `CompareObjectHandles` 检查是否为同一内核对象，兼容合并管道；能力不可用时显式报错。独立 stderr 保留失败告警，合并流保持 scorecard JSON 可解析。修复 #55 的剩余输出流问题。

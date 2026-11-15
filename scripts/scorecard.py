@@ -42,13 +42,15 @@ def _normalised_diversity(values: list[str]) -> float:
 
 
 def _diagnosis_counts(diagnosis_data: dict | None) -> tuple[dict[str, int], bool]:
+    from diagnosis_kinds import is_issue
     if not isinstance(diagnosis_data, dict):
         return {}, False
     diagnosis = diagnosis_data.get("diagnosis")
     if not isinstance(diagnosis, list):
         return {}, False
     counts = Counter(
-        item.get("dimension") for item in diagnosis if isinstance(item, dict)
+        item.get("dimension") for item in diagnosis
+        if isinstance(item, dict) and is_issue(item)
     )
     return {str(key): value for key, value in counts.items() if key}, True
 

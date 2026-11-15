@@ -20,6 +20,22 @@ def _diagnosis():
     }
 
 
+@pytest.mark.parametrize('invalid', [True, -1, '1', None, 2])
+def test_issue_counters_fail_closed_when_invalid(monkeypatch, load_script_module, invalid):
+    weekly = load_script_module('weekly-health-check.py')
+    baseline = _baseline()
+    baseline['diagnosis_summary'].update({
+        'kind_version': 1, 'issue_by_severity': {'P0': 0, 'P1': 0, 'P2': invalid},
+    })
+    diagnosis = {**_diagnosis(), 'diagnosis_kind_version': 1}
+    monkeypatch.setattr(weekly, '_load_baseline', lambda *args: (baseline, 'base.json'))
+    monkeypatch.setattr(weekly, '_run_diagnose', lambda *args: (diagnosis, None))
+    monkeypatch.setattr(weekly, '_run_test_suite', lambda *args: ({'summary': {'score': 80}}, None))
+    result = weekly.check_regression('wiki', wiki_root='wiki')
+    assert result['pass'] is False
+    assert any('分类计数无效' in error for error in result['errors'])
+
+
 def test_weekly_health_ontology_path_does_not_typeerror(monkeypatch, load_script_module):
     weekly = load_script_module("weekly-health-check.py")
     monkeypatch.setattr(weekly, "_load_baseline", lambda *args: (_baseline(), "/tmp/base.json"))

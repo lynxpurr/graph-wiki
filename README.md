@@ -119,6 +119,10 @@ cd /path/to/your/wiki
 
 ### 基线里的 `by_severity` 语义
 
+诊断条目新增 `kind: issue|disclosure|assessment`，原 `diagnosis` 和 `by_severity` 保留全部条目以兼容已有读取方；`disclosures` 单列披露与正常评估，`issue_by_severity` 仅统计真实问题。周检严重度告警使用后者，代码区、scheme、空目标豁免不再制造 P2 退化；异常互惠仍是问题，正常互惠属于评估。健康分的结构问题计数也排除披露与正常评估。
+
+新基线在 `diagnosis_summary` 保存 `kind_version: 1` 与 `issue_by_severity`。旧基线缺少该口径时周检明确失败并要求重新执行 `baseline-save`，不把旧的混合计数静默当作真实问题计数。原 `by_severity` 的缺失、零计数及数据自洽检查仍保留。
+
 周检按严重度（P0/P1/P2）对比时，对基线中的 `diagnosis_summary.by_severity` 分四种情况处理：
 
 | 基线内容 | 处理 | 理由 |
