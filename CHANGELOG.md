@@ -5,6 +5,11 @@
 - 保留原 `diagnosis` 数组及原始 `by_severity`，新增条目 `kind`、顶层 `disclosures` 和 `issue_by_severity`；代码区/scheme/空目标豁免是披露，正常互惠是评估，异常互惠仍是问题。未知 kind 按问题处理，避免静默漏报。
 - 周检严重度告警只比较真实问题，健康分的结构计数不再把披露当死链。基线保存分类版本及真实问题计数；旧混合计数不再静默参与新口径比较，必须重新保存基线。维度总分与满分不变。
 
+## Unreleased — Windows 输出流与测试
+
+- Windows 使用 `CompareObjectHandles` 检查是否为同一内核对象，兼容合并管道；能力不可用时显式报错。独立 stderr 保留失败告警，合并流保持 scorecard JSON 可解析。修复 #55 的剩余输出流问题。
+- 修正基线路径测试的 POSIX 常量假设（#51），新增 Windows Python 3.10/3.12 CI；保留既有 Linux 必需检查名称。
+
 ## Unreleased — Windows 持久化兼容性
 
 ### Fixed

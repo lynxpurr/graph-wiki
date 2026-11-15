@@ -134,6 +134,7 @@ def test_t5_reciprocity_between_35_and_50_is_acceptable():
 
 def test_streams_share_destination_handles_zero_inode_and_same_stream(monkeypatch):
     suite = _load_graph_test_suite()
+    monkeypatch.setattr(suite.sys, 'platform', 'linux')
 
     class FakeStat:
         def __init__(self, st_dev: int, st_ino: int):
@@ -191,4 +192,19 @@ def test_streams_share_destination_handles_zero_inode_and_same_stream(monkeypatc
         pass
 
     assert suite._streams_share_destination(BadStream(), BadStream()) is False
+
+
+def test_windows_stream_probe_failure_is_visible(monkeypatch):
+    suite = _load_graph_test_suite()
+    monkeypatch.setattr(suite.sys, 'platform', 'win32')
+    class Stream:
+        def __init__(self, fd):
+            self.fd = fd
+        def fileno(self):
+            return self.fd
+    def unavailable(*_args):
+        raise OSError('probe unavailable')
+    monkeypatch.setattr(suite, '_windows_same_object', unavailable)
+    with pytest.raises(OSError, match='probe unavailable'):
+        suite._streams_share_destination(Stream(1), Stream(2))
 
